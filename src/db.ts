@@ -53,6 +53,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatCoverOpacity: 30,
   chatCoverBlur: 6,
   plazaUrl: 'plaza/index.json',
+  hallUrl: '',
   regexEnabled: true,
   memoryCharLimit: 1500,
   memoryAutoPatrol: true,

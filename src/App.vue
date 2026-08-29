@@ -4,7 +4,7 @@ import { darkTheme, lightTheme, zhCN, type GlobalThemeOverrides } from 'naive-ui
 import { globalErrors } from './lib/errors'
 import {
   MessagesSquare, LibraryBig, Settings2, Plus,
-  SunMedium, MoonStar, BarChart3, BrainCircuit, LayoutTemplate, Ellipsis, Heart, Store, Wand2, DatabaseBackup,
+  SunMedium, MoonStar, BarChart3, BrainCircuit, LayoutTemplate, Ellipsis, Heart, Store, Wand2, DatabaseBackup, Dices,
 } from 'lucide-vue-next'
 import { useSettingsStore } from './stores/settings'
 import { useCharactersStore } from './stores/characters'
@@ -21,9 +21,10 @@ const UiTemplatesView = defineAsyncComponent(() => import('./views/UiTemplatesVi
 const PlazaView = defineAsyncComponent(() => import('./views/PlazaView.vue'))
 const AiWorkshopView = defineAsyncComponent(() => import('./views/AiWorkshopView.vue'))
 const DataView = defineAsyncComponent(() => import('./views/DataView.vue'))
+const HallView = defineAsyncComponent(() => import('./views/HallView.vue'))
 const MoreModal = defineAsyncComponent(() => import('./components/MoreModal.vue'))
 
-type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'aiworkshop' | 'data'
+type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'aiworkshop' | 'data' | 'hall'
 
 const settings = useSettingsStore()
 const characters = useCharactersStore()
@@ -106,6 +107,7 @@ const NAV: { key: View; icon: typeof MessagesSquare; label: string }[] = [
   { key: 'uitpl', icon: LayoutTemplate, label: 'UI 模板' },
   { key: 'plaza', icon: Store, label: '卡片广场' },
   { key: 'aiworkshop', icon: Wand2, label: 'AI 工作台' },
+  { key: 'hall', icon: Dices, label: '在线跑团' },
   { key: 'data', icon: DatabaseBackup, label: '导入 / 导出' },
 ]
 
@@ -241,6 +243,7 @@ onMounted(async () => {
             <PlazaView v-if="view === 'plaza'" />
             <AiWorkshopView v-if="view === 'aiworkshop'" @close="view = 'characters'" @goto="switchView" />
             <DataView v-if="view === 'data'" @finish="switchView('chat')" />
+            <HallView v-if="view === 'hall'" />
           </main>
 
           <!-- 「更多」弹窗（首次打开时才加载） -->

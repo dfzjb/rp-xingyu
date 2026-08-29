@@ -197,6 +197,7 @@ export interface Settings {
   chatCoverOpacity: number
   chatCoverBlur: number
   plazaUrl: string // 角色卡广场索引地址（index.json）
+  hallUrl: string // 在线跑团前端地址（rp-hall 独立部署，留空隐藏入口）
   regexEnabled: boolean // 全局启用正则脚本（显示层与发送层）
   memoryCharLimit: number // 经典记忆注入总字数上限
   memoryAutoPatrol: boolean // 记忆自动巡逻提炼开关
