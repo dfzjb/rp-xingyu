@@ -117,19 +117,6 @@
 }
 .hall-resume-item:hover { border-color: var(--accent); }
 
-/* 弹窗 */
-.hall-modal-mask {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55);
-  display: flex; align-items: center; justify-content: center; z-index: 60;
-}
-.hall-modal {
-  width: 460px; max-width: calc(100vw - 32px); max-height: 84vh; overflow-y: auto;
-  background: var(--bg-1); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
-}
-.hall-modal-head { display: flex; justify-content: space-between; align-items: center; }
-.hall-modal-head h3 { margin: 0; }
-.hall-modal-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 14px; }
-
 /* 杂项 */
 .hall-center-hint { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
 .hall-spinner {

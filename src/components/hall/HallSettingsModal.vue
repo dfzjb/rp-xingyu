@@ -27,9 +27,9 @@ async function save() {
 </script>
 
 <template>
-  <div class="hall-modal-mask" @click.self="emit('close')">
-    <div class="hall-modal">
-      <div class="hall-modal-head">
+  <div class="modal-mask" @click.self="emit('close')">
+    <div class="modal-box">
+      <div class="modal-head">
         <h3>跑团设置</h3>
         <button class="btn ghost sm" @click="emit('close')">关闭</button>
       </div>
@@ -48,7 +48,7 @@ async function save() {
       <div class="section-title">世界观 / 团规备注（房主，随战役保存）</div>
       <textarea v-model="worldNote" class="input" rows="3" style="width: 100%; resize: vertical" placeholder="跑团背景、规则约定、KP 风格要求…" />
 
-      <div class="hall-modal-foot">
+      <div class="modal-foot">
         <span v-if="saved" style="color: var(--ok); font-size: 12px">已保存</span>
         <button class="btn primary" @click="save">保存</button>
       </div>

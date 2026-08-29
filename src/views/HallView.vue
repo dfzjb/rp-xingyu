@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { Dices, RefreshCw, Lock, LockOpen, Users, Plus, LogOut, Settings2, UserRound } from 'lucide-vue-next'
+import { Dices, RefreshCw, Lock, LockOpen, Users, Plus, LogOut, Settings2, UserRound, Wand2 } from 'lucide-vue-next'
 import {
   hall, connectLobby, disconnectLobby, connect, leaveRoom, refreshCampaigns,
   type CreateMeta, type Profile,
@@ -14,6 +14,8 @@ import HallMembersPanel from '../components/hall/HallMembersPanel.vue'
 import HallDiceBar from '../components/hall/HallDiceBar.vue'
 import HallSettingsModal from '../components/hall/HallSettingsModal.vue'
 import HallPersonaModal from '../components/hall/HallPersonaModal.vue'
+
+const emit = defineEmits<{ (e: 'open-ai-workshop'): void }>()
 
 // ── 大厅 / 房间切换 ──
 const inRoom = computed(() => hall.state.phase === 'room' || hall.state.phase === 'connecting')
@@ -227,6 +229,7 @@ watch(() => hall.state.error, (e) => {
           <button class="btn sm" title="跑团设置（中继地址）" @click="showSettings = true"><Settings2 :size="13" />设置</button>
           <button class="btn sm" title="刷新列表" @click="connectLobby()"><RefreshCw :size="13" />刷新</button>
           <button class="btn sm" title="管理你的人设（进房身份）" @click="showPersona = true"><UserRound :size="13" />人设</button>
+          <button class="btn sm" title="AI 生成角色卡 / 世界书 / 正则 / UI 模板" @click="emit('open-ai-workshop')"><Wand2 :size="13" />AI 工作台</button>
           <button class="btn primary" @click="openCreate"><Plus :size="15" />创建房间</button>
         </div>
 
