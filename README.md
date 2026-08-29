@@ -20,34 +20,22 @@ Vue 3 + TypeScript + Vite + Pinia + Dexie(IndexedDB)，UI 基于 Naive UI + 自�
 npm install
 npm run dev        # http://127.0.0.1:5273
 npm run build      # 产物在 dist/，base='./' 支持任意子路径部署
+npm run typecheck  # vue-tsc 类型检查
+npm test           # Vitest 单元测试（90 项，覆盖引擎层与 db 持久化）
 ```
+
+## CI
+
+仓库内置两个 GitHub Actions 工作流：
+
+- `.github/workflows/ci.yml`：push / PR 时执行类型检查 + 单元测试 + 生产构建
+- `.github/workflows/deploy.yml`：main 分支推送时执行上述检查并自动发布 GitHub Pages
 
 ## 部署到 GitHub Pages
 
 1. 将本仓库推送到 GitHub（公开仓库可直接使用 Pages）。
-2. 仓库 Settings → Pages → Source 选择 **GitHub Actions**，添加工作流：
-
-```yaml
-name: Deploy
-on: { push: { branches: [main] } }
-permissions: { contents: read, pages: write, id-token: write }
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm ci && npm run build
-      - uses: actions/upload-pages-artifact@v3
-        with: { path: dist }
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: github-pages
-    steps:
-      - uses: actions/deploy-pages@v4
-```
+2. 仓库 Settings → Pages → Source 选择 **GitHub Actions**。
+3. 推送到 main 即自动构建并发布（工作流已在 `.github/workflows/deploy.yml` 内置）。
 
 `base: './'` 已配置好，任意子路径（`https://用户名.github.io/仓库名/`）均可直接运行。
 
