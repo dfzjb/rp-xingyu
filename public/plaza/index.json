@@ -1,0 +1,14 @@
+[
+  {
+    "name": "海风酒馆·老板娘",
+    "description": "滨海小城老酒馆的老板娘，沉默寡言但心思细腻。示例卡。",
+    "tags": ["原创", "都市", "治愈"],
+    "url": "cards/tavern-keeper.json"
+  },
+  {
+    "name": "时间冻结的法师学徒",
+    "description": "圣冠王国的法师学徒，觉醒了冻结时间的异能。示例卡。",
+    "tags": ["奇幻", "冒险"],
+    "url": "cards/frost-mage.json"
+  }
+]

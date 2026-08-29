@@ -1,0 +1,231 @@
+// 旧版 legacy_* 数据形状（迁移用；字段宽松处理，未知字段一律保留）
+import type { UiTemplate } from './lib/uitemplate'
+
+/** 旧版角色卡（服务端已把 .cards 池合并还原后的完整卡） */
+export interface LegacyCharacter {
+  name: string
+  description?: string
+  personality?: string
+  scenario?: string
+  first_mes?: string
+  creator_notes?: string
+  avatar?: string // data:image/*;base64,...
+  uuid: string
+  createdAt?: number
+  hash?: string
+  worldInfo?: unknown[]
+  regexScripts?: unknown[]
+  uiTemplates?: unknown[]
+  recentGenerationTimes?: number[]
+  [k: string]: unknown
+}
+
+/** 旧版消息（扁平结构，含大量 UI 态字段——实质字段之外的原样保留） */
+export interface LegacyMessage {
+  id?: string
+  role: string
+  name?: string
+  content?: string
+  reasoning?: string
+  avatar?: string | null
+  isSelf?: boolean | string // 旧版存的是 'True'/'False' 字符串
+  isTriggered?: boolean
+  imageAttachments?: { dataUrl: string; description?: string }[]
+  [k: string]: unknown
+}
+
+// ============ 新站原生模型 ============
+
+/** 新站消息：树节点（借鉴 Artemis tree.js 的结构，重新生成为兄弟节点） */
+export interface MsgNode {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  name: string
+  content: string
+  reasoning?: string
+  avatar?: string | null
+  isSelf: boolean
+  createdAt: number
+  parentId: string | null
+  childrenIds: string[]
+  imageAttachments?: { dataUrl: string; description?: string }[]
+  /** 旧数据原样保留的额外字段（UI 态等，供未来功能升级用） */
+  extra?: Record<string, unknown>
+  /** 流式生成中的临时标记（不落库） */
+  streaming?: boolean
+}
+
+/** 新站会话：角色 × 会话（消息以 id→node 映射存储，当前链路 = 根→activeNode） */
+export interface ChatSession {
+  id: string // 旧版键名（`<charId>` / `<charId>__branch__<bid>`）或新会话 uuid
+  charUuid: string
+  name: string // 展示名：主线 / 原分支名 / 会话 N
+  rootNodeId: string | null
+  activeNodeId: string | null
+  createdAt: number
+  updatedAt: number
+  origin: 'main' | 'legacy-branch' | 'new'
+  legacyBranchId?: string
+  nodes: Record<string, MsgNode>
+  /** UI 模板运行时变量状态（templateId → variables），由 AI 回复中的 <ui_template_updates> 驱动 */
+  uiTemplateStates?: Record<string, Record<string, unknown>>
+}
+
+/** 新站角色卡（字段与酒馆 v2/v3 兼容，未知字段原样保留） */
+export interface CharacterCard {
+  uuid: string
+  name: string
+  description: string
+  personality: string
+  scenario: string
+  first_mes: string
+  creator_notes: string
+  avatar: string // data URI 或空串
+  createdAt: number
+  importedAt: number
+  /** 备选开场白（ST alternate_greetings），新建会话时可选 */
+  alternateGreetings?: string[]
+  /** 示例对话（ST mes_example，<START> 分块） */
+  mesExample?: string
+  /** 覆盖主系统提示词（ST system_prompt） */
+  systemPromptOverride?: string
+  /** 历史后指令（ST post_history_instructions） */
+  postHistoryInstructions?: string
+  creator?: string
+  characterVersion?: string
+  tags?: string[]
+  worldInfo: unknown[]
+  regexScripts: unknown[]
+  uiTemplates: UiTemplate[]
+  [k: string]: unknown
+}
+
+/** NPC 好感度（Artemis Behavior Engine 六维三轴模型 + 4 级冲突），按 会话+角色名 建档 */
+export interface NpcAffinity {
+  id: string // `${sessionId}:${npcName}`
+  sessionId: string
+  npcName: string
+  /** 三组相对属性轴，每轴两方向 0-100，通常此消彼长 */
+  interest: number // 关注轴正向：兴趣
+  annoyance: number // 关注轴负向：厌烦
+  attraction: number // 心动轴正向：吸引
+  disgust: number // 心动轴负向：反感
+  trust: number // 自在轴正向：信任
+  cringe: number // 自在轴负向：尴尬
+  /** 冲突等级手动覆盖（0-4）；null = 按维度自动推导 */
+  conflictOverride?: number | null
+  updatedAt: number
+}
+
+/** 每日用量记录（date = YYYY-MM-DD，主键） */
+export interface UsageRow {
+  date: string
+  charsIn: number
+  charsOut: number
+  calls: number
+}
+
+/** 用户人设 */
+export interface Persona {
+  uuid: string
+  name: string
+  description: string
+  person: string // 视角：first / second
+  avatar: string
+}
+
+/** kv 表：旧版其余键原样存档（无损兜底） */
+export interface KvRow {
+  key: string // 原 legacy_* 键名
+  value: unknown
+  updatedAt: number
+}
+
+export interface ModelSlot {
+  label: string
+  model: string
+}
+
+/**
+ * 提示词预设条目（对齐旧版模型）：有序列表，每条可独立启停。
+ * role=system 拼入系统提示末尾；user/assistant 作为消息追加在历史之后。
+ */
+export interface PromptPreset {
+  id: string
+  name: string
+  content: string
+  enabled: boolean
+  role: 'system' | 'user' | 'assistant'
+}
+
+/** 会话记忆条目（对齐旧版经典记忆形状） */
+export interface MemoryEntry {
+  id: string
+  sessionId: string // 会话 id；'global' 为全局记忆
+  summary: string // 记忆要点正文
+  turn?: number // 关联楼层（从 1 起）
+  sourceAssistantIds?: string[] // 绑定的 AI 消息节点 id（注入到其后）
+  enabled: boolean
+  classicMemory: true
+  source: 'manual' | 'ai'
+  createdAt: number
+  /** 向量模式：文本嵌入向量（由 embedding 模型生成） */
+  embedding?: number[]
+}
+
+export interface Settings {
+  id: 'app'
+  apiBaseUrl: string
+  apiKey: string
+  /** 图片生成模型连接 */
+  imageApiBaseUrl: string
+  imageApiKey: string
+  imageModel: string
+  /** 视频生成模型连接 */
+  videoApiBaseUrl: string
+  videoApiKey: string
+  videoModel: string
+  /** 三模型槽：0=主对话 1=备用A 2=备用B（对齐旧版三槽设计） */
+  modelSlots: ModelSlot[]
+  activeSlot: number
+  temperature: number
+  maxTokens: number
+  reasoningEffort: string // minimal | low | medium | high
+  contextMessages: number // 滑窗：随请求发送的最近消息条数
+  themeMode: 'dark' | 'light'
+  /** 聊天区角色卡封面背景：浓度 0-100（0=关闭）与模糊半径 px */
+  chatCoverOpacity: number
+  chatCoverBlur: number
+  plazaUrl: string // 角色卡广场索引地址（index.json）
+  regexEnabled: boolean // 全局启用正则脚本（显示层与发送层）
+  memoryCharLimit: number // 经典记忆注入总字数上限
+  memoryAutoPatrol: boolean // 记忆自动巡逻提炼开关
+  memoryPatrolFloors: number // 每提炼一次所需的最低新增楼数
+  memorySummaryStyle: 'brief' | 'balanced' | 'detailed' // 提炼详略档位
+  /** ── 记忆引擎（旧版参数语义）── */
+  memoryEngineOn: boolean
+  memoryMode: 'summary' | 'vector'
+  memoryAuxModel: string // 总结模式副模型（空 = 用主模型）
+  memoryEmbeddingModel: string // 向量模式 embedding 模型
+  memoryVectorTopK: number // 向量模式检索条数
+  memoryConcurrency: number // 补录并发数
+  memoryKeepFloors: number // 保留最近楼层（不参与提炼）
+  /** 提示词预设条目（旧版 presets 模型）：有序、可启停、带角色 */
+  promptEntries: PromptPreset[]
+  lastActiveCharUuid?: string
+  activePersonaUuid?: string
+  migratedFrom?: string // 旧版用户目录标识
+  migratedAt?: number
+}
+
+/** 迁移导入报告 */
+export interface MigrateReport {
+  characters: number
+  chats: number
+  branches: number
+  messages: number
+  kvKeys: number
+  personas: number
+  unmatchedChats: string[]
+  warnings: string[]
+}

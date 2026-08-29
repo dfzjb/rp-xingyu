@@ -1,0 +1,19 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.local
+
+# 体积庞大的服务端全量备份（含全部角色卡与聊天记录，不入库）
+tools/server_backup_*/
+
+# 本地联调夹具：从服务端拉取的真实用户数据
+tools/test_fixture/
+
+# 生成物与第三方卡片内容夹具（保留本地，不入公开仓库）
+.test/roundtrip.mjs
+.test/card-templates.json
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db

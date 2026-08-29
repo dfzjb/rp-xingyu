@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>SSE 连通性测试</title></head>
+<body style="font-family:monospace;background:#111;color:#eee;padding:20px">
+<h3>Mock SSE 连通性测试</h3>
+<button id="go">开始测试</button>
+<pre id="log" style="white-space:pre-wrap;background:#000;padding:12px;margin-top:12px;min-height:200px"></pre>
+<script>
+const log = (m) => { document.getElementById('log').textContent += m + '\n'; };
+document.getElementById('go').onclick = async () => {
+  const el = document.getElementById('log');
+  el.textContent = '';
+  const t0 = performance.now();
+  try {
+    log('[0ms] 发起 fetch /v1/chat/completions (stream:true)');
+    const resp = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer sk-test' },
+      body: JSON.stringify({ model: 'mock-rp-model', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    log(`[${Math.round(performance.now() - t0)}ms] HTTP ${resp.status}`);
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', nChunks = 0, full = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) { log(`[${Math.round(performance.now() - t0)}ms] 流结束 (done=true)`); break; }
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith('data:')) continue;
+        const p = t.slice(5).trim();
+        if (p === '[DONE]') { log(`[${Math.round(performance.now() - t0)}ms] 收到 [DONE]`); continue; }
+        try { full += JSON.parse(p).choices[0].delta.content || ''; nChunks++; } catch (e) {}
+      }
+      if (nChunks === 3) log(`[${Math.round(performance.now() - t0)}ms] 已收 ${nChunks} 块…`);
+    }
+    log(`完成：共 ${nChunks} 块，${full.length} 字`);
+    log('内容预览: ' + full.slice(0, 80));
+  } catch (e) {
+    log(`[${Math.round(performance.now() - t0)}ms] 异常: ${e.message}`);
+  }
+};
+</script>
+</body>
+</html>

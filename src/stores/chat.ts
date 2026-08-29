@@ -1,0 +1,736 @@
+import { defineStore } from 'pinia'
+import { computed, ref } from 'vue'
+import { db } from '../db'
+import type { ChatSession, CharacterCard, MsgNode, Persona } from '../types'
+import { uuid } from '../lib/id'
+import { streamChat, type ApiConfig } from '../lib/api'
+import { buildPrompt } from '../lib/prompt'
+import { deepPlain } from '../lib/plain'
+import { distillMemoriesFromChat, backfillMemories, searchVectorMemories } from '../lib/memories'
+import { evaluateNpcsAutonomously } from '../lib/affinity'
+import { parseCot } from '../lib/cot'
+import { recordUsage } from '../lib/usage'
+import { normalizeUiTemplates } from '../lib/uitemplate'
+import { parseUiTemplateUpdates, applyUiTemplateUpdates, stripUiTemplateUpdates } from '../lib/ui-template-state'
+import { useCharactersStore } from './characters'
+import { usePersonasStore } from './personas'
+import { useSettingsStore } from './settings'
+
+/**
+ * 对话核心：消息以树节点存储（Artemis 式），
+ * 当前链路 = 根 → … → activeNode；重新生成 = 生成兄弟节点，历史永不丢失。
+ */
+export const useChatStore = defineStore('chat', () => {
+  const sessions = ref<ChatSession[]>([])
+  const currentSessionId = ref('')
+  const loaded = ref(false)
+  const generating = ref(false)
+  const generatingError = ref('')
+  /** 一次性临时规范指令（随下次发送附带，旧版语义） */
+  const pendingInstruction = ref('')
+  /** 每会话上次自动提炼时的楼层数 */
+  const lastPatrolFloor = new Map<string, number>()
+
+  let abortFn: (() => void) | null = null
+
+  async function load() {
+    const rows = await db.chats.toArray()
+    rows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    // 崩溃残留的 streaming 标记清理
+    for (const s of rows) {
+      for (const n of Object.values(s.nodes)) n.streaming = false
+    }
+    sessions.value = rows
+    loaded.value = true
+  }
+
+  const currentSession = computed<ChatSession | null>(
+    () => sessions.value.find((s) => s.id === currentSessionId.value) || null,
+  )
+
+  /** 当前链路：root → … → activeNode */
+  const chain = computed<MsgNode[]>(() => {
+    const s = currentSession.value
+    if (!s || !s.activeNodeId) return []
+    const path: MsgNode[] = []
+    let cur: MsgNode | undefined = s.nodes[s.activeNodeId]
+    while (cur) {
+      path.unshift(cur)
+      cur = cur.parentId ? s.nodes[cur.parentId] : undefined
+    }
+    return path
+  })
+
+  /** 链路正文总字数（剥思维链标签与空白，与旧版口径对齐） */
+  const totalBodyChars = computed(() => {
+    let n = 0
+    for (const m of chain.value) {
+      const t = (m.content || '').replace(/<(think|cot)>[\s\S]*?(?:<\/\s*\1\s*>|$)/gi, '')
+      n += t.replace(/\s/g, '').length
+    }
+    return n
+  })
+
+  function persist(session: ChatSession) {
+    session.updatedAt = Date.now()
+    // deepPlain 剥掉响应式 Proxy（IndexedDB 无法结构化克隆 Proxy）
+    return db.chats.put(deepPlain(session))
+  }
+
+  function sessionsOfChar(charUuid: string) {
+    return sessions.value.filter((s) => s.charUuid === charUuid)
+  }
+
+  /** 打开角色：有会话选最近的，没有则用开场白新建 */
+  async function openCharacter(charUuid: string) {
+    const chars = useCharactersStore()
+    if (!chars.loaded) await chars.load()
+    const char = chars.list.find((c) => c.uuid === charUuid)
+    if (!char) return
+    const settings = useSettingsStore()
+    settings.patch({ lastActiveCharUuid: charUuid })
+
+    const existing = sessionsOfChar(charUuid)
+    if (existing.length) {
+      currentSessionId.value = [...existing].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0].id
+      return
+    }
+    await createSession(char)
+  }
+
+  async function selectSession(id: string) {
+    currentSessionId.value = id
+  }
+
+  /**
+   * 新建会话。greetingIndex：开场白序号（0=first_mes，1..n=alternate_greetings）；
+   * 不传且存在备选开场白时由调用方决定，此处默认用 first_mes。
+   */
+  async function createSession(char: CharacterCard, greetingIndex = 0) {
+    const s: ChatSession = {
+      id: uuid(),
+      charUuid: char.uuid,
+      name: `会话 ${sessionsOfChar(char.uuid).length + 1}`,
+      rootNodeId: null,
+      activeNodeId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      origin: 'new',
+      nodes: {},
+    }
+    const greetings = [char.first_mes?.trim() || '', ...(char.alternateGreetings || []).map((g) => g.trim())].filter(Boolean)
+    const opening = greetings[greetingIndex] || greetings[0] || ''
+    if (opening) {
+      const root: MsgNode = {
+        id: uuid(),
+        role: 'assistant',
+        name: char.name,
+        content: opening,
+        avatar: char.avatar || null,
+        isSelf: false,
+        createdAt: Date.now(),
+        parentId: null,
+        childrenIds: [],
+      }
+      s.nodes[root.id] = root
+      s.rootNodeId = root.id
+      s.activeNodeId = root.id
+    }
+    sessions.value.unshift(s)
+    currentSessionId.value = s.id
+    await persist(s)
+    return s
+  }
+
+  async function deleteSession(id: string) {
+    await db.chats.delete(id)
+    sessions.value = sessions.value.filter((s) => s.id !== id)
+    if (currentSessionId.value === id) {
+      currentSessionId.value = sessions.value[0]?.id || ''
+    }
+  }
+
+  async function renameSession(id: string, name: string) {
+    const s = sessions.value.find((x) => x.id === id)
+    if (!s) return
+    s.name = name
+    await persist(s)
+  }
+
+  function appendNode(s: ChatSession, node: MsgNode) {
+    if (node.parentId) {
+      const p = s.nodes[node.parentId]
+      if (p) p.childrenIds.push(node.id)
+    } else {
+      s.rootNodeId = node.id
+    }
+    s.nodes[node.id] = node
+    s.activeNodeId = node.id
+  }
+
+  /** 发送用户消息 → 自动生成回复 */
+  async function send(text: string, images?: { dataUrl: string; description?: string }[]) {
+    const s = currentSession.value
+    if (!s || generating.value) return
+    const chars = useCharactersStore()
+    const char = chars.list.find((c) => c.uuid === s.charUuid)
+    if (!char) return
+    const personas = usePersonasStore()
+    const persona = personas.list.find((p) => p.uuid === personas.activeUuid)
+
+    const userNode: MsgNode = {
+      id: uuid(),
+      role: 'user',
+      name: persona?.name || '我',
+      content: text,
+      isSelf: true,
+      createdAt: Date.now(),
+      parentId: s.activeNodeId,
+      childrenIds: [],
+      imageAttachments: images?.length ? images : undefined,
+    }
+    appendNode(s, userNode)
+
+    const assistantNode: MsgNode = {
+      id: uuid(),
+      role: 'assistant',
+      name: char.name,
+      content: '',
+      reasoning: '',
+      avatar: char.avatar || null,
+      isSelf: false,
+      createdAt: Date.now(),
+      parentId: userNode.id,
+      childrenIds: [],
+      streaming: true,
+    }
+    appendNode(s, assistantNode)
+    // 关键：从响应式代理取回节点引用——直接持有原始对象的话，
+    // 流式写入不会触发 Vue 更新（内容永远不上屏）
+    const liveAssistant = s.nodes[assistantNode.id]
+    await persist(s)
+    const instruction = pendingInstruction.value
+    pendingInstruction.value = ''
+    try {
+      await generateInto(s, liveAssistant, char, persona, instruction)
+      // 记忆自动巡逻：AI 回复完成后按楼数阈值后台提炼
+      void maybeAutoPatrol(s)
+    } finally {
+      pendingInstruction.value = ''
+    }
+  }
+
+  /** 重新生成：assistant 节点生成兄弟节点（旧版本保留在树里可切回） */
+  async function regenerate(nodeId: string) {
+    const s = currentSession.value
+    if (!s || generating.value) return
+    const old = s.nodes[nodeId]
+    if (!old || old.role !== 'assistant' || !old.parentId) return
+    const chars = useCharactersStore()
+    const char = chars.list.find((c) => c.uuid === s.charUuid)
+    if (!char) return
+    const personas = usePersonasStore()
+    const persona = personas.list.find((p) => p.uuid === personas.activeUuid)
+
+    const node: MsgNode = {
+      id: uuid(),
+      role: 'assistant',
+      name: char.name,
+      content: '',
+      reasoning: '',
+      avatar: char.avatar || null,
+      isSelf: false,
+      createdAt: Date.now(),
+      parentId: old.parentId,
+      childrenIds: [],
+      streaming: true,
+    }
+    appendNode(s, node) // active 已指向父节点所在位置的下潜链
+    const liveNode = s.nodes[node.id] // 经代理取回，保证流式写入可触发更新
+    await persist(s)
+    await generateInto(s, liveNode, char, persona)
+  }
+
+  /**
+   * 某节点时点的模板变量状态：沿链向上找最近的 AI 节点快照（finish 时写入 extra.uiTplState）。
+   * 分支切换 / 重 roll / 删除节点时用它回滚，避免面板显示另一条分支的变量。
+   * 找不到快照返回 null（旧版本会话无快照，调用方回退会话级状态）。
+   */
+  function baselineUiState(s: ChatSession, nodeId: string | null): Record<string, Record<string, unknown>> | null {
+    let cur: MsgNode | undefined = nodeId ? s.nodes[nodeId] : undefined
+    while (cur) {
+      const snap = (cur.extra as Record<string, unknown> | undefined)?.uiTplState
+      if (snap && typeof snap === 'object' && !Array.isArray(snap)) {
+        return snap as Record<string, Record<string, unknown>>
+      }
+      cur = cur.parentId ? s.nodes[cur.parentId] : undefined
+    }
+    return null
+  }
+
+  /** 回滚会话模板状态到当前活跃节点时点的快照（无快照不动，避免误清旧数据） */
+  function restoreUiState(s: ChatSession) {
+    const restored = s.activeNodeId ? baselineUiState(s, s.activeNodeId) : null
+    if (restored) s.uiTemplateStates = restored
+  }
+
+  /** 组装上下文并流式生成填充既有 assistant 占位节点 */
+  async function generateInto(
+    s: ChatSession,
+    node: MsgNode,
+    char: CharacterCard,
+    persona?: Persona,
+    pendingInstruction?: string,
+  ) {
+    const settings = useSettingsStore()
+    const cfg: ApiConfig = {
+      baseUrl: settings.settings.apiBaseUrl,
+      apiKey: settings.settings.apiKey,
+      model: settings.activeModel,
+      temperature: settings.settings.temperature,
+      maxTokens: settings.settings.maxTokens,
+      reasoningEffort: settings.settings.reasoningEffort,
+    }
+    const contextMessages = settings.settings.contextMessages
+    const fail = async (msg: string) => {
+      node.streaming = false
+      node.content = msg
+      generating.value = false
+      await persist(s)
+    }
+    if (!cfg.apiKey) return fail('（未配置 API Key：请到「设置」填写中转站密钥）')
+    if (!cfg.model) return fail('（未选择模型：请到「设置」选择对话模型）')
+
+    // 上下文链路 = root → … → 父节点（生成节点自身排除）
+    const path: MsgNode[] = []
+    let cur: MsgNode | undefined = node.parentId ? s.nodes[node.parentId] : undefined
+    while (cur) {
+      path.unshift(cur)
+      cur = cur.parentId ? s.nodes[cur.parentId] : undefined
+    }
+
+    // UI 模板：启用的模板列表 + 本节点起点的变量状态
+    // （优先沿父链取最近快照 —— 重 roll 时即父链时点；无快照回退会话级状态，兼容旧数据）
+    const uiTpls = normalizeUiTemplates(char.uiTemplates).filter((t) => t.enabled)
+    const uiStates = baselineUiState(s, node.parentId) ?? s.uiTemplateStates ?? {}
+
+    // 记忆/好感度/提示词组装：任一步失败都不能把占位节点卡在 streaming 态
+    let messages: ReturnType<typeof buildPrompt>
+    try {
+      let memories
+      if (settings.settings.memoryMode === 'vector' && settings.settings.memoryEmbeddingModel) {
+        // 向量模式：用最近对话作为 query 检索语义相关记忆
+        try {
+          const recentText = path
+            .slice(-6)
+            .map((n) => parseCot(n.content || '').main)
+            .filter(Boolean)
+            .join('\n')
+            .slice(0, 2000)
+          memories = await searchVectorMemories(
+            {
+              baseUrl: settings.settings.apiBaseUrl,
+              apiKey: settings.settings.apiKey,
+              model: settings.settings.memoryEmbeddingModel,
+            },
+            [s.id, 'global'],
+            recentText || ' ',
+            settings.settings.memoryVectorTopK || 8,
+          )
+        } catch {
+          // 向量检索失败时回退到总结模式（全量注入）
+          memories = await db.memories
+            .where('sessionId')
+            .anyOf([s.id, 'global'])
+            .toArray()
+        }
+      } else {
+        // 总结模式：全量注入（由 prompt.ts 按预算分配）
+        memories = await db.memories
+          .where('sessionId')
+          .anyOf([s.id, 'global'])
+          .toArray()
+      }
+
+      // 好感度状态行（每个已追踪 NPC 一条）
+      let affinityLines: string[] = []
+      try {
+        const { affinityStatusLines: lines } = await import('../lib/affinity')
+        affinityLines = await lines(s.id)
+      } catch {
+        /* 无好感度数据不阻塞 */
+      }
+
+      messages = buildPrompt(char, persona, path, contextMessages, {
+        regexScripts: char.regexScripts,
+        regexEnabled: settings.settings.regexEnabled !== false,
+        memories,
+        memoryCharLimit: settings.settings.memoryCharLimit || 1500,
+        promptEntries: (settings.settings.promptEntries || []).filter((p) => p.enabled),
+        pendingInstruction,
+        affinityLines,
+        uiTemplates: uiTpls,
+        uiTemplateStates: uiStates,
+      })
+    } catch (err) {
+      return fail(`（上下文组装失败：${(err as Error)?.message || String(err)}）`)
+    }
+
+    generating.value = true
+    generatingError.value = ''
+    let lastPersist = Date.now()
+    let finished = false
+    const finish = async () => {
+      if (finished) return
+      finished = true
+      node.streaming = false
+      generating.value = false
+      abortFn = null
+
+      // 解析 AI 回复中的 <ui_template_updates> 并更新会话状态
+      if (uiTpls.length) {
+        const updates = parseUiTemplateUpdates(node.content)
+        let effective = uiStates
+        if (updates.length) {
+          const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
+          effective = result.states
+          if (result.changedCount > 0) {
+            s.uiTemplateStates = result.states
+          }
+        }
+        // 把本节点时点的变量状态快照写到节点上（分支切换/重 roll/删除时按快照回滚）
+        node.extra = { ...(node.extra || {}), uiTplState: effective }
+        // 从可见正文中剥离变量更新块
+        node.content = stripUiTemplateUpdates(node.content)
+      }
+
+      // 用量统计：最后一条用户消息正文为发送口径
+      const lastUser = [...path].reverse().find((n) => n.role === 'user')
+      void recordUsage(
+        parseCot(lastUser?.content || '').main.length,
+        parseCot(node.content || '').main.length,
+      )
+      await persist(s)
+    }
+
+    abortFn = streamChat(cfg, messages, {
+      onDelta: (d) => {
+        node.content += d
+        // 流式中节流落库（防崩溃丢内容；whole-doc put 对几 MB 会话足够快）
+        if (Date.now() - lastPersist > 3000) {
+          lastPersist = Date.now()
+          void persist(s)
+        }
+      },
+      onReasoning: (d) => {
+        node.reasoning = (node.reasoning || '') + d
+      },
+      onDone: () => { void finish() },
+      onError: (err) => {
+        generatingError.value = err.message
+        node.content += `\n\n> ⚠️ 生成失败：${err.message}`
+        void finish()
+      },
+    }).abort
+  }
+
+  /** 停止生成（保留已生成部分） */
+  function stopGenerating() {
+    abortFn?.()
+  }
+
+  /**
+   * 记忆自动巡逻 + 好感度自主评判：
+   * AI 回复结束后，若距上次新增楼数达到阈值，后台用副模型
+   * 提炼最近剧情记忆，并自主评估出场 NPC 的好感度变化（失败静默）。
+   */
+  async function maybeAutoPatrol(s: ChatSession) {
+    const settings = useSettingsStore()
+    if (settings.settings.memoryAutoPatrol === false || settings.settings.memoryEngineOn === false) return
+    const floors = Math.max(5, settings.settings.memoryPatrolFloors || 20)
+    const totalFloors = Object.keys(s.nodes).length
+    const last = lastPatrolFloor.get(s.id) ?? -1
+    if (totalFloors < floors || (last >= 0 && totalFloors - last < floors)) {
+      lastPatrolFloor.set(s.id, last >= 0 ? last : 0)
+      return
+    }
+    lastPatrolFloor.set(s.id, totalFloors)
+    try {
+      // 沿当前链路取最近楼层正文
+      const path: MsgNode[] = []
+      let cur: MsgNode | undefined = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
+      while (cur) {
+        path.unshift(cur)
+        cur = cur.parentId ? s.nodes[cur.parentId] : undefined
+      }
+      const settingsCfg = useSettingsStore()
+      const cfg = {
+        baseUrl: settingsCfg.settings.apiBaseUrl,
+        apiKey: settingsCfg.settings.apiKey,
+        // 副模型：记忆/评判专用（空则回退主模型）
+        model: settingsCfg.settings.memoryAuxModel || settingsCfg.activeModel,
+        temperature: 0.3,
+        maxTokens: 1024,
+        reasoningEffort: 'minimal',
+      }
+      // 好感度自主评判（多 NPC）
+      try {
+        await evaluateNpcsAutonomously(cfg, path, s.id, floors)
+      } catch { /* 静默 */ }
+      // 记忆补录（保留最近楼层之外）
+      await backfillMemories(cfg, path, s.id, {
+        keepFloors: settings.settings.memoryKeepFloors || 32,
+        concurrency: Math.max(1, settingsCfg.settings.memoryConcurrency || 10),
+        style: (settingsCfg.settings.memorySummaryStyle || 'balanced') as never,
+      })
+    } catch {
+      // 静默：巡逻失败不打扰用户
+    }
+  }
+
+  /** 页面卸载前冲洗流式状态 */
+  async function flushOnUnload() {
+    const s = currentSession.value
+    if (!s) return
+    let dirty = false
+    for (const n of Object.values(s.nodes)) {
+      if (n.streaming) { n.streaming = false; dirty = true }
+    }
+    if (dirty) await persist(s)
+  }
+
+  /** 续写：流式追加到最后一条 AI 消息尾部 */
+  /** 沿当前链路取全部节点（root→activeNode） */
+  function buildChain(s: ChatSession): MsgNode[] {
+    const path: MsgNode[] = []
+    let cur: MsgNode | undefined = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
+    while (cur) { path.unshift(cur); cur = cur.parentId ? s.nodes[cur.parentId] : undefined }
+    return path
+  }
+
+  const continuing = ref(false)
+  const impersonateResult = ref('')
+
+  async function continueLast() {
+    const s = currentSession.value
+    if (!s || generating.value) return
+    const chain = buildChain(s)
+    const lastAi = [...chain].reverse().find((n) => n.role === 'assistant')
+    if (!lastAi) return
+    const chars = useCharactersStore()
+    const char = chars.list.find((c) => c.uuid === s.charUuid)
+    if (!char) return
+    const personas = usePersonasStore()
+    const persona = personas.list.find((p) => p.uuid === personas.activeUuid)
+    const settings = useSettingsStore()
+    const cfg = {
+      baseUrl: settings.settings.apiBaseUrl,
+      apiKey: settings.settings.apiKey,
+      model: settings.activeModel, // 与主生成同源：跟随当前激活槽位/模型
+      temperature: settings.settings.temperature,
+      maxTokens: settings.settings.maxTokens,
+      reasoningEffort: 'minimal' as string,
+    }
+    if (!cfg.apiKey || !cfg.model) {
+      generatingError.value = '（未配置 API Key 或未选择模型：请到「设置」填写）'
+      return
+    }
+    // UI 模板（续写沿用该消息自身的最新快照；无快照回退会话级状态）
+    const uiTpls = normalizeUiTemplates(char.uiTemplates).filter((t) => t.enabled)
+    const uiStates = baselineUiState(s, lastAi.id) ?? s.uiTemplateStates ?? {}
+    // 构建提示词：历史里已带最后一条 AI 消息，不再重复发送其正文
+    const msgs = buildPrompt(char, persona ?? undefined, chain, settings.settings.contextMessages, {
+      uiTemplates: uiTpls,
+      uiTemplateStates: uiStates,
+    })
+    if (lastAi.content.trim()) {
+      msgs.push({
+        role: 'system',
+        content: '【续写】从上面最后一条回复的断点无缝续写，直接输出后续正文；不要重复已有内容，不要重新开头。',
+      })
+    }
+    generating.value = true
+    generatingError.value = ''
+    let done = false
+    let lastPersist = Date.now()
+    const baseLen = lastAi.content.length
+    abortFn = streamChat(cfg, msgs, {
+      onDelta(d) {
+        lastAi.content += d
+        // 流式中节流落库（与 generateInto 同款，防崩溃丢内容）
+        if (Date.now() - lastPersist > 3000) {
+          lastPersist = Date.now()
+          void persist(s)
+        }
+      },
+      onDone() {
+        if (done) return
+        done = true
+        generating.value = false
+        abortFn = null
+        // 解析 UI 模板更新 + 快照回滚点
+        if (uiTpls.length) {
+          const updates = parseUiTemplateUpdates(lastAi.content)
+          if (updates.length) {
+            const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
+            if (result.changedCount > 0) s.uiTemplateStates = result.states
+            lastAi.extra = { ...(lastAi.extra || {}), uiTplState: result.states }
+          }
+          lastAi.content = stripUiTemplateUpdates(lastAi.content)
+        }
+        // 用量统计：续写无新用户输入，发送口径计 0
+        void recordUsage(0, Math.max(0, lastAi.content.length - baseLen))
+        void persist(s)
+      },
+      onError(err) {
+        if (done) return
+        done = true
+        generating.value = false
+        abortFn = null
+        generatingError.value = err.message
+        lastAi.content += `\n> ⚠️ ${err.message}`
+        void persist(s)
+      },
+    }).abort
+  }
+
+  /** 代入：让 AI 代写用户下一句 */
+  async function impersonate() {
+    const s = currentSession.value
+    if (!s || generating.value) return
+    const chars = useCharactersStore()
+    const char = chars.list.find((c) => c.uuid === s.charUuid)
+    if (!char) return
+    const personas = usePersonasStore()
+    const persona = personas.list.find((p) => p.uuid === personas.activeUuid)
+    const settings = useSettingsStore()
+    const cfg = {
+      baseUrl: settings.settings.apiBaseUrl,
+      apiKey: settings.settings.apiKey,
+      model: settings.activeModel, // 与主生成同源：跟随当前激活槽位/模型
+      temperature: settings.settings.temperature,
+      maxTokens: 300,
+      reasoningEffort: 'minimal' as string,
+    }
+    if (!cfg.apiKey || !cfg.model) {
+      generatingError.value = '（未配置 API Key 或未选择模型：请到「设置」填写）'
+      return
+    }
+    const path: MsgNode[] = []
+    let cur: MsgNode | undefined = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
+    while (cur) { path.unshift(cur); cur = cur.parentId ? s.nodes[cur.parentId] : undefined }
+    const messages = buildPrompt(char, persona ?? undefined, path, settings.settings.contextMessages).filter(m => m.role !== 'system')
+    // 过滤 system 后补一条精简指令：带上用户人设，否则代入时不知道"我是谁"
+    messages.unshift({
+      role: 'system',
+      content:
+        `你是用户「${persona?.name || '用户'}」。根据上下文，写出用户的下一句台词。只输出台词本身，不要任何解释或旁白。不超过 100 字。` +
+        (persona?.description?.trim() ? `\n【用户人设】\n${persona.description.trim()}` : ''),
+    })
+    generating.value = true
+    let done = false
+    let result = ''
+    abortFn = streamChat(cfg, messages, {
+      onDelta(d) { result += d },
+      onDone() {
+        if (done) return
+        done = true
+        generating.value = false
+        abortFn = null
+        impersonateResult.value = parseCot(result).main.trim()
+      },
+      onError(err) {
+        if (done) return
+        done = true
+        generating.value = false
+        abortFn = null
+        generatingError.value = err.message
+        console.error('impersonate error:', err.message)
+      },
+    }).abort
+  }
+
+  async function editNode(nodeId: string, content: string) {
+    const s = currentSession.value
+    if (!s) return
+    const n = s.nodes[nodeId]
+    if (!n) return
+    n.content = content
+    await persist(s)
+  }
+
+  /** 删除节点及其子树 */
+  async function deleteNode(nodeId: string) {
+    const s = currentSession.value
+    if (!s) return
+    const n = s.nodes[nodeId]
+    if (!n) return
+    const doomed: string[] = []
+    const stack = [nodeId]
+    while (stack.length) {
+      const id = stack.pop()!
+      const node = s.nodes[id]
+      if (!node) continue
+      doomed.push(id)
+      stack.push(...node.childrenIds)
+    }
+    const wasActive = doomed.includes(s.activeNodeId || '')
+    if (n.parentId) {
+      const p = s.nodes[n.parentId]
+      if (p) p.childrenIds = p.childrenIds.filter((id) => id !== nodeId)
+    }
+    for (const id of doomed) delete s.nodes[id]
+    if (doomed.includes(s.rootNodeId || '')) {
+      s.rootNodeId = null
+      s.activeNodeId = null
+    } else if (wasActive) {
+      s.activeNodeId = n.parentId || s.rootNodeId
+    }
+    restoreUiState(s) // 活跃链变了，模板变量回滚到当前时点
+    await persist(s)
+  }
+
+  /** 某节点的分支导航信息：当前 active 路径所用 child 序号 / 兄弟总数 */
+  function branchInfo(nodeId: string): { index: number; total: number } | null {
+    const s = currentSession.value
+    if (!s) return null
+    const n = s.nodes[nodeId]
+    if (!n || n.childrenIds.length < 2) return null
+    let cur = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
+    let activeChildId: string | null = null
+    while (cur) {
+      if (cur.parentId === nodeId) { activeChildId = cur.id; break }
+      cur = cur.parentId ? s.nodes[cur.parentId] : undefined
+    }
+    const idx = activeChildId ? n.childrenIds.indexOf(activeChildId) : n.childrenIds.length - 1
+    return { index: idx < 0 ? n.childrenIds.length - 1 : idx, total: n.childrenIds.length }
+  }
+
+  /** 切到该节点的第 idx 个 child（沿最新子链下潜到叶） */
+  async function switchBranch(nodeId: string, idx: number) {
+    const s = currentSession.value
+    if (!s) return
+    const n = s.nodes[nodeId]
+    if (!n) return
+    const childId = n.childrenIds[idx]
+    if (!childId) return
+    let cur = s.nodes[childId]
+    while (cur && cur.childrenIds.length) {
+      cur = s.nodes[cur.childrenIds[cur.childrenIds.length - 1]]
+    }
+    if (cur) {
+      s.activeNodeId = cur.id
+      restoreUiState(s) // 模板变量回滚到该分支时点的快照
+    }
+    await persist(s)
+  }
+
+  return {
+    sessions, currentSessionId, currentSession, chain, totalBodyChars,
+    loaded, generating, generatingError, pendingInstruction,
+    continuing, impersonateResult,
+    load, openCharacter, selectSession, createSession, deleteSession, renameSession,
+    send, regenerate, stopGenerating, flushOnUnload, continueLast, impersonate,
+    editNode, deleteNode, branchInfo, switchBranch, sessionsOfChar,
+  }
+})

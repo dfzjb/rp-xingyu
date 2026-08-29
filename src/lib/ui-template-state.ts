@@ -1,0 +1,212 @@
+/**
+ * UI 模板动态状态：AI 回复时通过 <ui_template_updates> 更新模板变量，
+ * 模板随剧情实时变化。对齐旧版 app.js 的 uiTemplate 更新管线（简化版）。
+ */
+import type { UiTemplate } from './uitemplate'
+
+/** 会话级模板变量状态：templateId → variables */
+export type UiTemplateStateMap = Record<string, Record<string, unknown>>
+
+const OPEN = '<ui_template_updates>'
+const CLOSE = '</ui_template_updates>'
+const BLOCK_RE = /<ui_template_updates\b[^>]*>([\s\S]*?)<\/ui_template_updates>/i
+const STRIP_RE = /<ui_template_updates\b[^>]*>[\s\S]*?<\/ui_template_updates>/gi
+const OPEN_STRIP_RE = /<ui_template_updates\b[^>]*>[\s\S]*$/i
+
+const CTX_OPEN = '<ui_template_state_context>'
+const CTX_CLOSE = '</ui_template_state_context>'
+
+/** 模板单条更新 */
+export interface UiTemplateUpdate {
+  id?: string
+  name?: string
+  variables?: Record<string, unknown>
+  reason?: string
+}
+
+/** 按路径取值（支持 a.b.0.c） */
+function getByPath(obj: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((cur, key) => {
+    if (cur && typeof cur === 'object') return (cur as Record<string, unknown>)[key]
+    return undefined
+  }, obj)
+}
+
+/** 按路径设值，自动创建中间对象/数组 */
+function setByPath(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
+  const keys = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
+  let cur: Record<string, unknown> = obj
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i]
+    const nextK = keys[i + 1]
+    if (cur[k] === undefined || cur[k] === null) {
+      cur[k] = /^\d+$/.test(nextK) ? [] : {}
+    }
+    cur = cur[k] as Record<string, unknown>
+  }
+  cur[keys[keys.length - 1]] = value
+  return obj
+}
+
+/** 深拷贝（JSON 安全） */
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v))
+}
+
+/** 模板变量的静态兜底链（与渲染端 renderUiTemplateHtml 的回退顺序保持一致） */
+function fallbackVars(t: UiTemplate): Record<string, unknown> {
+  return t.variableState ?? t.initialVariableState ?? {}
+}
+
+/**
+ * 构建注入到 system 提示词末尾的模板状态上下文。
+ * 让 AI 知道当前模板变量的值，从而能判断如何更新。
+ */
+export function buildUiTemplateContextPrompt(
+  templates: UiTemplate[],
+  states: UiTemplateStateMap,
+): string {
+  const enabled = templates.filter((t) => t.enabled && t.htmlTemplate)
+  if (!enabled.length) return ''
+
+  const sections = enabled
+    .map((t) => {
+      const vars = states[t.id] ?? fallbackVars(t)
+      if (!vars || Object.keys(vars).length === 0) return null
+      return [
+        `  <template_state name="${t.name || t.id}">`,
+        JSON.stringify(vars, null, 2).split('\n').map((l) => '  ' + l).join('\n'),
+        '  </template_state>',
+      ].join('\n')
+    })
+    .filter(Boolean)
+
+  if (!sections.length) return ''
+
+  return [
+    CTX_OPEN,
+    '  <description>以下是当前 UI 模板的变量状态快照，仅供你理解角色状态、关系、地点等剧情信息，不要在正文中复述或输出这些变量。</description>',
+    ...sections,
+    CTX_CLOSE,
+  ].join('\n')
+}
+
+/**
+ * 构建追加到 system 提示词的"输出变量更新块"指令。
+ * 告诉 AI 在正文后输出 <ui_template_updates>{"updates":[...]}</ui_template_updates>。
+ * states：会话级实时变量状态 —— 必须传入，否则 AI 看到的是卡内静态初始值，
+ * 会与 <ui_template_state_context> 里的实时快照互相矛盾。
+ */
+export function buildUiTemplateUpdateInstruction(
+  templates: UiTemplate[],
+  states: UiTemplateStateMap = {},
+): string {
+  const enabled = templates.filter((t) => t.enabled && t.htmlTemplate)
+  if (!enabled.length) return ''
+
+  const payload = enabled.map((t) => ({
+    id: t.id,
+    name: t.name || 'UI模板',
+    currentVariables: states[t.id] ?? fallbackVars(t),
+    variableSchema: t.variableSchema || '',
+  }))
+
+  return [
+    '[UI模板变量更新]',
+    '你需要在正文结束后追加一个隐藏变量更新块。这个块只给前端读取，不属于正文，不要在正文中提到它。',
+    '格式必须严格如下：',
+    OPEN,
+    '{"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}]}',
+    CLOSE,
+    '没有变量变化也必须输出：',
+    `${OPEN}{"updates":[]}${CLOSE}`,
+    '只更新下方模板已定义的变量；不要修改HTML；不要编造无关字段。',
+    '变量值可以是文字、数字、对象或数组；数组字段可返回完整数组，也可用 "items.0.name" 这种路径更新单项。',
+    '模板变量如下：',
+    JSON.stringify(payload, null, 2),
+  ].join('\n')
+}
+
+/** 解析单个更新块内的 JSON 载荷为更新列表 */
+function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
+  const body = String(raw || '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    // 尝试截取最外层 { ... }
+    const s = body.indexOf('{')
+    const e = body.lastIndexOf('}')
+    if (s >= 0 && e > s) {
+      try { parsed = JSON.parse(body.slice(s, e + 1)) } catch { return [] }
+    } else {
+      return []
+    }
+  }
+  if (Array.isArray(parsed)) return parsed as UiTemplateUpdate[]
+  if (parsed && typeof parsed === 'object') {
+    const p = parsed as { updates?: unknown[]; variables?: Record<string, unknown> }
+    if (Array.isArray(p.updates)) return p.updates as UiTemplateUpdate[]
+    if (p.variables && typeof p.variables === 'object') return [{ variables: p.variables }]
+  }
+  return []
+}
+
+/** 从 AI 回复中提取全部 <ui_template_updates> 块并解析为更新列表（支持多个块） */
+export function parseUiTemplateUpdates(text: string): UiTemplateUpdate[] {
+  const out: UiTemplateUpdate[] = []
+  const re = new RegExp(BLOCK_RE.source, 'gi')
+  const src = String(text || '')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src))) {
+    out.push(...parseUpdatesPayload(m[1]))
+    if (m.index === re.lastIndex) re.lastIndex++
+  }
+  return out
+}
+
+/** 把 AI 返回的更新应用到状态映射，返回新映射和变更数 */
+export function applyUiTemplateUpdates(
+  states: UiTemplateStateMap,
+  templates: UiTemplate[],
+  updates: UiTemplateUpdate[],
+): { states: UiTemplateStateMap; changedCount: number } {
+  const next = clone(states)
+  let changedCount = 0
+
+  for (const upd of updates) {
+    if (!upd || !upd.variables || typeof upd.variables !== 'object') continue
+    // 找到目标模板
+    const targets = upd.id
+      ? templates.filter((t) => t.id === upd.id)
+      : upd.name
+        ? templates.filter((t) => t.name === upd.name)
+        : templates.length === 1 ? [templates[0]] : []
+    if (!targets.length) continue
+
+    for (const tpl of targets) {
+      if (!next[tpl.id]) next[tpl.id] = clone(tpl.initialVariableState ?? {})
+      const state = next[tpl.id]
+      for (const [key, value] of Object.entries(upd.variables)) {
+        const oldVal = getByPath(state, key)
+        if (JSON.stringify(oldVal) !== JSON.stringify(value)) {
+          setByPath(state, key, value)
+          changedCount++
+        }
+      }
+    }
+  }
+
+  return { states: next, changedCount }
+}
+
+/** 从可见正文中剥离 <ui_template_updates> 块 */
+export function stripUiTemplateUpdates(text: string): string {
+  return String(text || '')
+    .replace(STRIP_RE, '')
+    .replace(OPEN_STRIP_RE, '')
+    .trimEnd()
+}
