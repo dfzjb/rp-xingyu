@@ -47,6 +47,24 @@ function parseSlashPattern(findRegex: string): { src: string; flags: string } {
 export function normalizeRegexScript(raw: unknown): RegexScript | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, any>
+  // 内部模型（正则编辑器保存的形状）原样归一化：applyRegexScripts 会对库里每条脚本
+  // 调用本函数，若不识别 pattern 字段，编辑器创建的脚本会被当旧版格式丢掉 pattern 而静默失效
+  if (typeof o.pattern === 'string') {
+    return {
+      id: typeof o.id === 'string' ? o.id : undefined,
+      name: String(o.name || '未命名'),
+      pattern: o.pattern,
+      replace: String(o.replace ?? ''),
+      flags: typeof o.flags === 'string' && o.flags ? o.flags : 'g',
+      affectsUser: o.affectsUser !== false,
+      affectsAI: o.affectsAI !== false,
+      applyOnDisplay: o.applyOnDisplay !== false,
+      applyOnSend: o.applyOnSend !== false,
+      disabled: o.disabled === true,
+      minDepth: typeof o.minDepth === 'number' ? o.minDepth : null,
+      maxDepth: typeof o.maxDepth === 'number' ? o.maxDepth : null,
+    }
+  }
   let pattern = ''
   let replace = ''
   let flags = o.flags && typeof o.flags === 'string' ? o.flags : 'g'

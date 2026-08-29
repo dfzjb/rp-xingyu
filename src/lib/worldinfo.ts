@@ -121,10 +121,10 @@ export function resolveWorldInfo(
   const activatedSet = new Set<WorldInfoEntry>()
   const activatedList: Activated[] = []
 
-  function tryActivate(e: WorldInfoEntry): boolean {
+  function tryActivate(e: WorldInfoEntry, source: string[]): boolean {
     if (activatedSet.has(e)) return false
     const d = typeof e.scanDepth === 'number' ? e.scanDepth : maxScan
-    const windowText = recentMessages.slice(-Math.max(1, d)).join('\n')
+    const windowText = source.slice(-Math.max(1, d)).join('\n')
     if (!primaryHit(e, windowText) && !e.constant) return false
     if (!secondaryPass(e, windowText)) return false
     if (!probPass(e)) return false
@@ -134,15 +134,16 @@ export function resolveWorldInfo(
   }
 
   // 第一轮：基于消息文本
-  for (const e of active) { tryActivate(e) }
+  for (const e of active) { tryActivate(e, recentMessages) }
 
-  // 递归轮：已激活内容作为新扫描文本
+  // 递归轮：已激活条目的内容作为新扫描文本（逐轮累积，直到不再有新激活）
   for (let step = 0; step < maxRecursionSteps; step++) {
     const texts = activatedList.map((a) => a.entry.content).join('\n')
+    if (!texts.trim()) break
     let anyNew = false
     for (const e of active) {
       if (activatedSet.has(e)) continue
-      if (tryActivate(e)) { anyNew = true; break } // 每轮只新增一批
+      if (tryActivate(e, [texts])) anyNew = true
     }
     if (!anyNew) break
   }
