@@ -11,8 +11,6 @@ import { Download, FolderInput, FileJson2, DatabaseBackup, ArrowRight, MessagesS
 import { NSelect } from 'naive-ui'
 import { useChatStore } from '../stores/chat'
 import { useCharactersStore } from '../stores/characters'
-import { migrateLegacyData, parseLegacyBackupFile } from '../lib/migrate'
-import { exportLegacyBundle } from '../lib/legacyExport'
 import { exportAll, restoreAll, downloadJson, db } from '../db'
 import type { MigrateReport } from '../types'
 import { uuid } from '../lib/id'
@@ -92,6 +90,8 @@ async function doExport() {
   exporting.value = true
   exportMsg.value = ''
   try {
+    // legacyExport/migrate 仅在本页用到，按需加载避免进首屏
+    const { exportLegacyBundle } = await import('../lib/legacyExport')
     const { d1, count } = await exportLegacyBundle()
     const bundle = { d1, ls: {} as Record<string, string> }
     const d = new Date()
@@ -147,6 +147,7 @@ async function onFilePicked(e: Event) {
       return
     }
     // 旧版备份 / 平面键值表：映射写入（不覆盖已有数据）
+    const { parseLegacyBackupFile, migrateLegacyData } = await import('../lib/migrate')
     const keys = parseLegacyBackupFile(obj)
     report.value = await migrateLegacyData(keys, f.name)
     await Promise.all([characters.load(), chat.load()])

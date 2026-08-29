@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { darkTheme, lightTheme, zhCN, type GlobalThemeOverrides } from 'naive-ui'
 import { globalErrors } from './lib/errors'
 import {
@@ -11,16 +11,17 @@ import { useCharactersStore } from './stores/characters'
 import { useChatStore } from './stores/chat'
 import { usePersonasStore } from './stores/personas'
 import ChatView from './views/ChatView.vue'
-import CharactersView from './views/CharactersView.vue'
-import UsageView from './views/UsageView.vue'
-import AffinityView from './views/AffinityView.vue'
-import MemorySystemView from './views/MemorySystemView.vue'
-import UiTemplatesView from './views/UiTemplatesView.vue'
-import PlazaView from './views/PlazaView.vue'
-import AiWorkshopView from './views/AiWorkshopView.vue'
-import DataView from './views/DataView.vue'
-import MoreModal from './components/MoreModal.vue'
 import Toaster from './components/Toaster.vue'
+
+// 非首屏视图与「更多」弹窗按需加载：首屏只拉聊天页 + vendor 分包
+const CharactersView = defineAsyncComponent(() => import('./views/CharactersView.vue'))
+const AffinityView = defineAsyncComponent(() => import('./views/AffinityView.vue'))
+const MemorySystemView = defineAsyncComponent(() => import('./views/MemorySystemView.vue'))
+const UiTemplatesView = defineAsyncComponent(() => import('./views/UiTemplatesView.vue'))
+const PlazaView = defineAsyncComponent(() => import('./views/PlazaView.vue'))
+const AiWorkshopView = defineAsyncComponent(() => import('./views/AiWorkshopView.vue'))
+const DataView = defineAsyncComponent(() => import('./views/DataView.vue'))
+const MoreModal = defineAsyncComponent(() => import('./components/MoreModal.vue'))
 
 type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'aiworkshop' | 'data'
 
@@ -33,9 +34,11 @@ const view = ref<View>('chat')
 const sidebarOpen = ref(false)
 const moreShow = ref(false)
 const moreTab = ref('presets')
+const moreMounted = ref(false)
 
 function openMore(tab: string) {
   moreTab.value = tab
+  moreMounted.value = true
   moreShow.value = true
   sidebarOpen.value = false
 }
@@ -240,8 +243,8 @@ onMounted(async () => {
             <DataView v-if="view === 'data'" @finish="switchView('chat')" />
           </main>
 
-          <!-- 「更多」弹窗 -->
-          <MoreModal v-model:show="moreShow" :initial-tab="moreTab" />
+          <!-- 「更多」弹窗（首次打开时才加载） -->
+          <MoreModal v-if="moreMounted" v-model:show="moreShow" :initial-tab="moreTab" />
 
           <!-- 轻量 toast -->
           <Toaster />

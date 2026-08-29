@@ -7,7 +7,19 @@ export default defineConfig({
   plugins: [vue()],
   build: {
     target: 'es2020',
-    chunkSizeWarningLimit: 1500,
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        // 第三方库按生态分组缓存：业务代码迭代时 vendor 块哈希稳定，浏览器命中缓存
+        manualChunks: {
+          'vendor-vue': ['vue', 'pinia'],
+          'vendor-ui': ['naive-ui'],
+          'vendor-md': ['markdown-it', 'dompurify', 'highlight.js'],
+          'vendor-db': ['dexie'],
+          'vendor-icons': ['lucide-vue-next'],
+        },
+      },
+    },
   },
   server: {
     host: '127.0.0.1',
