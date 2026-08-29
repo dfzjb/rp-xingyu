@@ -24,5 +24,9 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5273,
+    // 开发时把 /ws 反代到本地跑团中继（npm run server），免跨域
+    proxy: {
+      '/ws': { target: 'ws://127.0.0.1:8787', ws: true },
+    },
   },
 })

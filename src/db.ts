@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie'
 import type { NpcAffinity, CharacterCard, ChatSession, KvRow, MemoryEntry, Persona, Settings, UsageRow } from './types'
+import type { HallCampaign } from './lib/hall/protocol'
 import { deepPlain } from './lib/plain'
 
 export class RpDb extends Dexie {
@@ -11,6 +12,7 @@ export class RpDb extends Dexie {
   memories!: Table<MemoryEntry, string>
   affinity!: Table<NpcAffinity, string>
   usage!: Table<UsageRow, string>
+  campaigns!: Table<HallCampaign, string>
 
   constructor() {
     super('RpSiteV2')
@@ -23,6 +25,10 @@ export class RpDb extends Dexie {
       memories: 'id, sessionId, createdAt',
       affinity: 'id, sessionId',
       usage: 'date',
+    })
+    // v2：在线跑团战役（房主本地持久化）。仅新增表，不改动既有表主键，升级安全
+    this.version(2).stores({
+      campaigns: 'id, roomCode, updatedAt',
     })
   }
 }
@@ -53,7 +59,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatCoverOpacity: 30,
   chatCoverBlur: 6,
   plazaUrl: 'plaza/index.json',
-  hallUrl: '',
+  hallWsUrl: '',
   regexEnabled: true,
   memoryCharLimit: 1500,
   memoryAutoPatrol: true,
@@ -85,7 +91,7 @@ export async function saveSettings(patch: Partial<Settings>) {
 }
 
 export async function exportAll() {
-  const [characters, chats, personas, kv, settings, memories, affinity, usage] = await Promise.all([
+  const [characters, chats, personas, kv, settings, memories, affinity, usage, campaigns] = await Promise.all([
     db.characters.toArray(),
     db.chats.toArray(),
     db.personas.toArray(),
@@ -94,12 +100,13 @@ export async function exportAll() {
     db.memories.toArray(),
     db.affinity.toArray(),
     db.usage.toArray(),
+    db.campaigns.toArray(),
   ])
   return {
     format: 'rp-site-backup',
     version: 2,
     exportedAt: new Date().toISOString(),
-    data: { characters, chats, personas, kv, settings, memories, affinity, usage },
+    data: { characters, chats, personas, kv, settings, memories, affinity, usage, campaigns },
   }
 }
 
@@ -113,13 +120,14 @@ export async function restoreAll(backup: {
     memories?: unknown[]
     affinity?: unknown[]
     usage?: unknown[]
+    campaigns?: unknown[]
   }
 }) {
   const d = backup?.data
   if (!d || !Array.isArray(d.characters) || !Array.isArray(d.chats)) {
     throw new Error('不是有效的备份文件（缺少 data.characters / data.chats）')
   }
-  await db.transaction('rw', [db.characters, db.chats, db.personas, db.kv, db.settings, db.memories, db.affinity, db.usage], async () => {
+  await db.transaction('rw', [db.characters, db.chats, db.personas, db.kv, db.settings, db.memories, db.affinity, db.usage, db.campaigns], async () => {
     await Promise.all([
       db.characters.clear(),
       db.chats.clear(),
@@ -129,6 +137,7 @@ export async function restoreAll(backup: {
       db.memories.clear(),
       db.affinity.clear(),
       db.usage.clear(),
+      db.campaigns.clear(),
     ])
     if (d.characters?.length) await db.characters.bulkPut(d.characters.map(deepPlain) as CharacterCard[])
     if (d.chats?.length) await db.chats.bulkPut(d.chats.map(deepPlain) as ChatSession[])
@@ -136,9 +145,10 @@ export async function restoreAll(backup: {
     if (d.kv?.length) await db.kv.bulkPut(d.kv.map(deepPlain) as KvRow[])
     if (d.settings?.length) await db.settings.bulkPut(d.settings.map(deepPlain) as Settings[])
     if (d.memories?.length) await db.memories.bulkPut(d.memories.map(deepPlain) as MemoryEntry[])
-    // 旧备份可能没有这两张表：有则恢复，无则留空
+    // 旧备份可能没有这几张表：有则恢复，无则留空
     if (d.affinity?.length) await db.affinity.bulkPut(d.affinity.map(deepPlain) as NpcAffinity[])
     if (d.usage?.length) await db.usage.bulkPut(d.usage.map(deepPlain) as UsageRow[])
+    if (d.campaigns?.length) await db.campaigns.bulkPut(d.campaigns.map(deepPlain) as HallCampaign[])
   })
 }
 
