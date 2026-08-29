@@ -243,7 +243,7 @@ onMounted(async () => {
             <PlazaView v-if="view === 'plaza'" />
             <AiWorkshopView v-if="view === 'aiworkshop'" @close="view = 'characters'" @goto="switchView" />
             <DataView v-if="view === 'data'" @finish="switchView('chat')" />
-            <HallView v-if="view === 'hall'" @open-ai-workshop="view = 'aiworkshop'" />
+            <HallView v-if="view === 'hall'" />
           </main>
 
           <!-- 「更多」弹窗（首次打开时才加载） -->

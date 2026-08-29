@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { Dices, RefreshCw, Lock, LockOpen, Users, Plus, LogOut, Settings2, UserRound, Wand2 } from 'lucide-vue-next'
 import {
-  hall, connectLobby, disconnectLobby, connect, leaveRoom, refreshCampaigns,
+  hall, connectLobby, disconnectLobby, connect, leaveRoom, refreshCampaigns, aiAssistRoom,
   type CreateMeta, type Profile,
 } from '../lib/hall/useHall'
 import { genRoomCode } from '../lib/hall/crypto'
@@ -14,8 +14,6 @@ import HallMembersPanel from '../components/hall/HallMembersPanel.vue'
 import HallDiceBar from '../components/hall/HallDiceBar.vue'
 import HallSettingsModal from '../components/hall/HallSettingsModal.vue'
 import HallPersonaModal from '../components/hall/HallPersonaModal.vue'
-
-const emit = defineEmits<{ (e: 'open-ai-workshop'): void }>()
 
 // ── 大厅 / 房间切换 ──
 const inRoom = computed(() => hall.state.phase === 'room' || hall.state.phase === 'connecting')
@@ -65,6 +63,25 @@ async function openCreate() {
     id: c.id, name: c.name, roomCode: c.roomCode, locked: c.locked, hasPassword: !!c.password,
   }))
   showCreate.value = true
+}
+
+// ── AI 辅助创作 ──
+const aiIdea = ref('')
+const aiBusy = ref(false)
+
+async function aiFill() {
+  if (aiBusy.value) return
+  aiBusy.value = true
+  createError.value = ''
+  try {
+    const idea = await aiAssistRoom(aiIdea.value)
+    createForm.title = idea.title
+    createForm.desc = idea.desc
+  } catch (err) {
+    createError.value = (err as Error).message
+  } finally {
+    aiBusy.value = false
+  }
 }
 
 function pickCover() { coverInput.value?.click() }
@@ -229,7 +246,6 @@ watch(() => hall.state.error, (e) => {
           <button class="btn sm" title="跑团设置（中继地址）" @click="showSettings = true"><Settings2 :size="13" />设置</button>
           <button class="btn sm" title="刷新列表" @click="connectLobby()"><RefreshCw :size="13" />刷新</button>
           <button class="btn sm" title="管理你的人设（进房身份）" @click="showPersona = true"><UserRound :size="13" />人设</button>
-          <button class="btn sm" title="AI 生成角色卡 / 世界书 / 正则 / UI 模板" @click="emit('open-ai-workshop')"><Wand2 :size="13" />AI 工作台</button>
           <button class="btn primary" @click="openCreate"><Plus :size="15" />创建房间</button>
         </div>
 
@@ -304,6 +320,25 @@ watch(() => hall.state.error, (e) => {
           <button class="modal-close" @click="showCreate = false">✕</button>
         </div>
         <div class="modal-body">
+          <div class="card-panel" style="margin-bottom: 14px; padding: 12px 14px; background: var(--bg-2); border-style: dashed">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px">
+              <Wand2 :size="16" style="color: var(--accent); flex-shrink: 0" />
+              <div style="font-size: 0.82rem; font-weight: 700">AI 辅助创作</div>
+            </div>
+            <div style="display: flex; gap: 8px">
+              <input
+                v-model="aiIdea"
+                class="input"
+                style="flex: 1; font-size: 0.82rem"
+                placeholder="一句话描述你想开的团，AI 帮你写房间名和简介…"
+                @keyup.enter="aiFill"
+              />
+              <button class="btn sm primary" style="white-space: nowrap" :disabled="aiBusy" @click="aiFill">
+                {{ aiBusy ? '生成中…' : 'AI 生成' }}
+              </button>
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-2); margin-top: 6px">如：周五晚带新人跑 COC 雾镇调查团，恐怖氛围，4 人</div>
+          </div>
           <div class="field">
             <label>房间名（会显示在大厅列表）</label>
             <input v-model="createForm.title" class="input" maxlength="40" placeholder="如：周五夜 · 万智宅邸" />

@@ -559,3 +559,40 @@ function scheduleKpCheck() {
 export function stopKp() {
   kpAbort?.abort()
 }
+
+// ── AI 辅助创作：一句话构想 → 房间名 + 简介（创建房间弹窗用）──
+
+/** 从模型回复中截取最外层 JSON 对象并解析 */
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  const cleaned = text.replace(/```(?:json)?/gi, '')
+  const s = cleaned.indexOf('{')
+  const e = cleaned.lastIndexOf('}')
+  if (s < 0 || e <= s) return null
+  try { return JSON.parse(cleaned.slice(s, e + 1)) } catch { return null }
+}
+
+export async function aiAssistRoom(idea: string): Promise<{ title: string; desc: string }> {
+  const cfg = kpApiConfig()
+  if (!cfg) throw new Error('请先在「更多 → 语言模型」里配置 API 地址、密钥与模型')
+  const trimmed = idea.trim()
+  if (!trimmed) throw new Error('先写一句你的构想，再让 AI 生成')
+  const messages = [
+    {
+      role: 'system',
+      content: '你是跑团开房文案助手。根据用户的一句话构想，生成房间名与房间简介。房间名不超过 20 字、有氛围感；简介不超过 120 字，说明题材、规则倾向与人数预期。只输出严格 JSON：{"title":"...","desc":"..."}，不要输出其他任何内容。',
+    },
+    { role: 'user', content: trimmed },
+  ]
+  const text = await new Promise<string>((resolve, reject) => {
+    streamChat(cfg, messages, {
+      onDelta: () => {},
+      onDone: (full) => resolve(full),
+      onError: (err) => reject(err),
+    })
+  })
+  const obj = extractJsonObject(text)
+  const title = String(obj?.title || '').trim().slice(0, 40)
+  const desc = String(obj?.desc || '').trim().slice(0, 200)
+  if (!title) throw new Error('AI 没有返回有效结果，请重试或换个说法')
+  return { title, desc }
+}
