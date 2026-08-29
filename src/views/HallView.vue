@@ -1,22 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { Dices, RefreshCw, Lock, LockOpen, Users, Plus, LogOut, Settings2 } from 'lucide-vue-next'
+import { Dices, RefreshCw, Lock, LockOpen, Users, Plus, LogOut, Settings2, UserRound } from 'lucide-vue-next'
 import {
   hall, connectLobby, disconnectLobby, connect, leaveRoom, refreshCampaigns,
   type CreateMeta, type Profile,
 } from '../lib/hall/useHall'
 import { genRoomCode } from '../lib/hall/crypto'
 import type { RoomMeta } from '../lib/hall/protocol'
+import { usePersonasStore } from '../stores/personas'
 import HallStoryStream from '../components/hall/HallStoryStream.vue'
 import HallComposer from '../components/hall/HallComposer.vue'
 import HallMembersPanel from '../components/hall/HallMembersPanel.vue'
 import HallDiceBar from '../components/hall/HallDiceBar.vue'
 import HallSettingsModal from '../components/hall/HallSettingsModal.vue'
+import HallPersonaModal from '../components/hall/HallPersonaModal.vue'
 
 // ── 大厅 / 房间切换 ──
 const inRoom = computed(() => hall.state.phase === 'room' || hall.state.phase === 'connecting')
-const showLobby = computed(() => !inRoom.value)
 const showSettings = ref(false)
+const showPersona = ref(false)
 
 onMounted(() => {
   void refreshCampaigns()
@@ -28,11 +30,18 @@ function copyRoomCode() {
   if (hall.state.roomCode) void navigator.clipboard?.writeText(hall.state.roomCode.toUpperCase())
 }
 
-// ── 入场资料（昵称必填，只在没填过时出现）──
-const profileForm = reactive<Profile>({ ...hall.profile })
-const profileReady = computed(() => !!profileForm.name.trim())
+// ── 入场身份：来自用户人设（原「更多 → 人设」体系）──
+const personas = usePersonasStore()
+const activePersona = computed(() => personas.list.find((p) => p.uuid === personas.activeUuid) || null)
 
-// ── 创建房间 ──
+/** 人设 → 房间身份：人设名 = 角色名，人设描述 = 给 KP 的介绍 */
+function personaProfile(): Profile | null {
+  const p = activePersona.value
+  if (!p) return null
+  return { name: p.name, charName: p.name, persona: p.description }
+}
+
+// ── 创建房间（只管房间本身；身份用人设）──
 const showCreate = ref(false)
 const creating = ref(false)
 const createForm = reactive({ title: '', desc: '', cover: '', locked: false, password: '' })
@@ -77,7 +86,8 @@ async function onCoverPicked(e: Event) {
 
 async function submitCreate() {
   if (creating.value) return
-  if (!profileReady.value) { createError.value = '请先填房间昵称'; return }
+  const profile = personaProfile()
+  if (!profile) { createError.value = '还没有人设：请先点「人设」创建你的身份'; return }
   if (createForm.locked && !createForm.password.trim()) { createError.value = '已选择上锁，请输入房间密码'; return }
   creating.value = true
   createError.value = ''
@@ -90,7 +100,7 @@ async function submitCreate() {
   await connect({
     mode: 'create',
     code: suggestCode.value,
-    profile: { ...profileForm },
+    profile,
     meta,
     password: createForm.locked ? createForm.password.trim() : '',
   })
@@ -102,12 +112,14 @@ async function submitCreate() {
 async function resumeCampaign(c: { id: string; name: string; roomCode: string; locked: boolean; hasPassword: boolean }) {
   const camp = hall.campaigns.find((x) => x.id === c.id)
   if (!camp) return
+  const profile = personaProfile()
+  if (!profile) { createError.value = '还没有人设：请先点「人设」创建你的身份'; return }
   creating.value = true
   createError.value = ''
   await connect({
     mode: 'create',
     code: camp.roomCode,
-    profile: { ...profileForm },
+    profile,
     campaignId: camp.id,
     meta: { title: camp.name, desc: camp.desc, cover: camp.cover, locked: camp.locked },
     password: camp.password,
@@ -137,14 +149,15 @@ function closeJoin() {
 async function submitJoin() {
   const room = joinTarget.value
   if (!room || joining.value) return
-  if (!profileReady.value) { joinError.value = '请先填房间昵称'; return }
+  const profile = personaProfile()
+  if (!profile) { joinError.value = '还没有人设：请先点「人设」创建你的身份'; return }
   if (room.locked && !joinPassword.value.trim()) { joinError.value = '该房间已上锁，请输入密码'; return }
   joining.value = true
   joinError.value = ''
   await connect({
     mode: 'join',
     code: room.code,
-    profile: { ...profileForm },
+    profile,
     password: room.locked ? joinPassword.value.trim() : '',
   })
   joining.value = false
@@ -213,12 +226,33 @@ watch(() => hall.state.error, (e) => {
           <span v-else-if="hall.lobby.status === 'off'" class="hall-sys-line">大厅离线——请确认中继已启动</span>
           <button class="btn sm" title="跑团设置（中继地址）" @click="showSettings = true"><Settings2 :size="13" />设置</button>
           <button class="btn sm" title="刷新列表" @click="connectLobby()"><RefreshCw :size="13" />刷新</button>
+          <button class="btn sm" title="管理你的人设（进房身份）" @click="showPersona = true"><UserRound :size="13" />人设</button>
           <button class="btn primary" @click="openCreate"><Plus :size="15" />创建房间</button>
         </div>
 
         <div v-if="hall.state.error" class="danger-box" style="margin-bottom: 12px">{{ hall.state.error }}</div>
 
-        <!-- 上锁房间需要先补密码；开放房间点击即入 -->
+        <!-- 当前入场身份 -->
+        <div class="card-panel" style="margin-bottom: 14px; padding: 10px 14px; display: flex; align-items: center; gap: 12px">
+          <template v-if="activePersona">
+            <div class="hall-avatar hall-avatar-sm" style="width: 38px; height: 38px; border-radius: 10px; overflow: hidden">
+              <img v-if="activePersona.avatar" :src="activePersona.avatar" style="width: 100%; height: 100%; object-fit: cover" alt="" />
+              <template v-else>{{ activePersona.name.slice(0, 1) }}</template>
+            </div>
+            <div style="flex: 1; min-width: 0">
+              <div style="font-size: 0.84rem"><b>{{ activePersona.name }}</b> <span class="hall-sys-line" style="display: inline">· 你将以这个身份进入房间</span></div>
+              <div class="hall-sys-line" style="text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ activePersona.description || '（人设还没有描述）' }}</div>
+            </div>
+            <button class="btn sm ghost" @click="showPersona = true">更换</button>
+          </template>
+          <template v-else>
+            <div class="hall-avatar hall-avatar-sm" style="width: 38px; height: 38px; border-radius: 10px">?</div>
+            <div style="flex: 1; font-size: 0.82rem; color: var(--text-1)">还没有人设——创建后即可用它进入房间</div>
+            <button class="btn sm primary" @click="showPersona = true"><UserRound :size="13" />去创建</button>
+          </template>
+        </div>
+
+        <!-- 在线房间卡片 -->
         <div v-if="hall.lobby.rooms.length" class="char-grid">
           <div
             v-for="room in hall.lobby.rooms"
@@ -254,12 +288,12 @@ watch(() => hall.state.error, (e) => {
         <!-- 大厅离线提示 -->
         <div v-if="hall.lobby.status === 'off'" class="card-panel" style="margin-top: 16px; padding: 12px 14px; font-size: 0.8rem; color: var(--text-2)">
           无法连接中继服务器：房间列表不可用。请确认 <code>npm run server</code> 已启动；
-          远程中继可在房间内「设置」里配置。点此页右上角「刷新」重试。
+          远程中继可在「设置」里配置。点此页右上角「刷新」重试。
         </div>
       </div>
     </div>
 
-    <!-- 创建房间弹窗 -->
+    <!-- 创建房间弹窗：只管房间本身，身份用人设 -->
     <div v-if="showCreate" class="modal-mask" @click.self="showCreate = false">
       <div class="modal-box">
         <div class="modal-head">
@@ -267,19 +301,6 @@ watch(() => hall.state.error, (e) => {
           <button class="modal-close" @click="showCreate = false">✕</button>
         </div>
         <div class="modal-body">
-          <div v-if="!profileReady" class="danger-box" style="margin-bottom: 12px">先填好入场资料（房间昵称必填），才会出现在成员列表里</div>
-          <div class="field">
-            <label>房间昵称 *</label>
-            <input v-model="profileForm.name" class="input" maxlength="16" placeholder="大家怎么称呼你" />
-          </div>
-          <div class="field">
-            <label>角色名</label>
-            <input v-model="profileForm.charName" class="input" maxlength="24" placeholder="你在故事里是谁（可与昵称相同）" />
-          </div>
-          <div class="field">
-            <label>一句话人设</label>
-            <input v-model="profileForm.persona" class="input" maxlength="60" placeholder="如：好奇心过剩的医学生，怕黑" />
-          </div>
           <div class="field">
             <label>房间名（会显示在大厅列表）</label>
             <input v-model="createForm.title" class="input" maxlength="40" placeholder="如：周五夜 · 万智宅邸" />
@@ -352,18 +373,25 @@ watch(() => hall.state.error, (e) => {
             {{ joinTarget.desc || '（房间主没有写简介）' }}
           </p>
 
-          <div class="field">
-            <label>房间昵称 *</label>
-            <input v-model="profileForm.name" class="input" maxlength="16" placeholder="大家怎么称呼你" />
+          <!-- 入场身份：来自用户人设 -->
+          <div class="card-panel" style="padding: 10px 12px; display: flex; align-items: center; gap: 10px; margin-bottom: 12px">
+            <template v-if="activePersona">
+              <div class="hall-avatar hall-avatar-sm" style="width: 38px; height: 38px; border-radius: 10px; overflow: hidden">
+                <img v-if="activePersona.avatar" :src="activePersona.avatar" style="width: 100%; height: 100%; object-fit: cover" alt="" />
+                <template v-else>{{ activePersona.name.slice(0, 1) }}</template>
+              </div>
+              <div style="flex: 1; min-width: 0">
+                <div style="font-size: 0.84rem"><b>{{ activePersona.name }}</b> <span class="hall-sys-line" style="display: inline">· 你的入场身份</span></div>
+                <div class="hall-sys-line" style="text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ activePersona.description || '（人设还没有描述）' }}</div>
+              </div>
+              <button class="btn sm ghost" @click="showPersona = true">更换</button>
+            </template>
+            <template v-else>
+              <div style="flex: 1; font-size: 0.82rem; color: var(--text-1)">还没有人设，进房前先创建你的身份</div>
+              <button class="btn sm primary" @click="showPersona = true">去创建</button>
+            </template>
           </div>
-          <div class="field">
-            <label>角色名</label>
-            <input v-model="profileForm.charName" class="input" maxlength="24" placeholder="你在故事里是谁" />
-          </div>
-          <div class="field">
-            <label>一句话人设</label>
-            <input v-model="profileForm.persona" class="input" maxlength="60" placeholder="让 KP 知道怎么安排你的戏份" />
-          </div>
+
           <div v-if="joinTarget.locked" class="field">
             <label>房间密码 *</label>
             <input v-model="joinPassword" class="input" type="password" maxlength="40" placeholder="问房间主要密码" @keyup.enter="submitJoin" />
@@ -379,5 +407,6 @@ watch(() => hall.state.error, (e) => {
     </div>
 
     <HallSettingsModal v-if="showSettings" @close="showSettings = false" />
+    <HallPersonaModal v-if="showPersona" style="z-index: 65" @close="showPersona = false" />
   </div>
 </template>

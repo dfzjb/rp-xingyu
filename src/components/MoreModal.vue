@@ -12,7 +12,6 @@ import PresetManagerPanel from './PresetManagerPanel.vue'
 import ApiSettingsPanel from './ApiSettingsPanel.vue'
 import ToolsPanel from './ToolsPanel.vue'
 import UsageView from '../views/UsageView.vue'
-import PersonasView from '../views/PersonasView.vue'
 import { useCharactersStore } from '../stores/characters'
 import type { CharacterCard } from '../types'
 
@@ -37,7 +36,6 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { key: 'presets', label: '预设', pane: 'presets' },
       { key: 'worldbook', label: '世界书', pane: 'worldbook' },
       { key: 'regex', label: '正则', pane: 'regex' },
-      { key: 'personas', label: '人设', pane: 'personas' },
     ],
   },
   {
@@ -156,10 +154,6 @@ const drawerWidth = Math.min(880, Math.max(430, window.innerWidth - 40))
               :list="(characters.list.find((c) => c.uuid === rxCharUuid) as CharacterCard).regexScripts"
               @update:list="onRxListUpdate"
             />
-          </template>
-
-          <template v-else-if="activeTab === 'personas'">
-            <PersonasView />
           </template>
 
           <template v-else-if="activeTab === 'usage'">
