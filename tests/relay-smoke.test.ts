@@ -124,3 +124,81 @@ describe('中继服务端', () => {
     expect(err.msg).toContain('占用')
   })
 })
+
+describe('房间列表与密码锁', () => {
+  it('create 带 meta → list 可见（含人数/上锁标记）；join/leave 触发 rooms-changed', async () => {
+    const port = await startServer()
+    const lobby = await connect(port)
+    send(lobby, { t: 'list' })
+    const empty = await nextFrame(lobby, (m) => m.t === 'rooms')
+    expect(empty.rooms).toEqual([])
+
+    const host = await connect(port)
+    send(host, {
+      t: 'create',
+      code: 'efg567',
+      meta: { title: '周五夜团', desc: '自由团 · 新人友好', cover: 'data:image/png;base64,AAA', locked: true },
+      proof: 'PROOF-HEX',
+    })
+    await nextFrame(host, (m) => m.t === 'created')
+
+    // 大厅收到 rooms-changed 后刷新列表
+    const changed = await nextFrame(lobby, (m) => m.t === 'rooms-changed')
+    expect(changed.t).toBe('rooms-changed')
+    send(lobby, { t: 'list' })
+    const listed = await nextFrame(lobby, (m) => m.t === 'rooms')
+    expect(listed.rooms).toEqual([
+      { code: 'efg567', title: '周五夜团', desc: '自由团 · 新人友好', cover: 'data:image/png;base64,AAA', locked: true, players: 1 },
+    ])
+
+    // 玩家加入 → 列表人数变化
+    const guest = await connect(port)
+    send(guest, { t: 'join', code: 'efg567', proof: 'PROOF-HEX' })
+    await nextFrame(guest, (m) => m.t === 'joined')
+    send(lobby, { t: 'list' })
+    const listed2 = await nextFrame(lobby, (m) => m.t === 'rooms')
+    expect((listed2.rooms as { players: number }[])[0].players).toBe(2)
+  })
+
+  it('上锁房间：错误 proof 拒绝，正确 proof 进入；开放房间无需 proof', async () => {
+    const port = await startServer()
+    const host = await connect(port)
+    send(host, { t: 'create', code: 'hjm678', meta: { title: '私团', locked: true }, proof: 'RIGHT-PROOF' })
+    await nextFrame(host, (m) => m.t === 'created')
+
+    const bad = await connect(port)
+    send(bad, { t: 'join', code: 'hjm678', proof: 'WRONG' })
+    const err = await nextFrame(bad, (m) => m.t === 'error')
+    expect(err.msg).toBe('密码错误')
+
+    const good = await connect(port)
+    send(good, { t: 'join', code: 'hjm678', proof: 'RIGHT-PROOF' })
+    await nextFrame(good, (m) => m.t === 'joined')
+
+    // 开放房间：无 proof 直接进
+    const host2 = await connect(port)
+    send(host2, { t: 'create', code: 'jkm789', meta: { title: '开放团', locked: false } })
+    await nextFrame(host2, (m) => m.t === 'created')
+    const open = await connect(port)
+    send(open, { t: 'join', code: 'jkm789' })
+    await nextFrame(open, (m) => m.t === 'joined')
+  })
+
+  it('meta 超长截断、非法封面被清空', async () => {
+    const port = await startServer()
+    const host = await connect(port)
+    send(host, {
+      t: 'create',
+      code: 'jkm234',
+      meta: { title: 'x'.repeat(100), desc: 'd'.repeat(500), cover: 'javascript:alert(1)', locked: false },
+    })
+    await nextFrame(host, (m) => m.t === 'created')
+    const watcher = await connect(port)
+    send(watcher, { t: 'list' })
+    const listed = await nextFrame(watcher, (m) => m.t === 'rooms')
+    const r = (listed.rooms as { title: string; desc: string; cover: string }[])[0]
+    expect(r.title.length).toBe(40)
+    expect(r.desc.length).toBe(200)
+    expect(r.cover).toBe('')
+  })
+})

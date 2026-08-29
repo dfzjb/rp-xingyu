@@ -55,4 +55,22 @@ export interface HallCampaign {
   events: RoomEvent[]
   /** KP 世界观/团规备注 */
   worldNote: string
+  /** 房间是否上锁（创建时状态） */
+  locked: boolean
+  /** 房间密码（仅存房主本地 IndexedDB，恢复战役重进时重新派生密钥；服务器永远不知道） */
+  password: string
+  /** 房间简介（恢复战役时回填列表展示） */
+  desc: string
+  /** 房间封面（恢复战役时回填列表展示） */
+  cover: string
+}
+
+/** 大厅房间条目（服务器广播的元数据：不含密码，密文内容永远不可见） */
+export interface RoomMeta {
+  code: string
+  title: string
+  desc: string
+  cover: string
+  locked: boolean
+  players: number
 }

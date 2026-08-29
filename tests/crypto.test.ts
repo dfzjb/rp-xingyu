@@ -1,13 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { deriveRoomKey, genRoomCode, openEvent, sealEvent } from '../src/lib/hall/crypto'
+import { deriveRoomKey, genRoomCode, keyProof, openEvent, roomSecret, sealEvent } from '../src/lib/hall/crypto'
 
 describe('E2EE 房间密钥', () => {
   it('同一房间码派生同一密钥，能互相解密', async () => {
     const key1 = await deriveRoomKey('abc234')
-    const key2 = await deriveRoomKey('ABC234') // 大小写归一化
+    const key2 = await deriveRoomKey(roomSecret('ABC234')) // 房间码大小写归一化由 roomSecret 负责
     const sealed = await sealEvent(key1, { k: 'chat', text: '你好，密文里的秘密' })
     const opened = await openEvent<{ k: string; text: string }>(key2, sealed)
     expect(opened.text).toBe('你好，密文里的秘密')
+  })
+
+  it('上锁房间：种子 = 房间码:密码；密码区分大小写，同密码双方密钥一致', async () => {
+    const host = await deriveRoomKey(roomSecret('abc234', 'LetMeIn'))
+    const guest = await deriveRoomKey(roomSecret('ABC234', 'LetMeIn')) // 房间码大写照常归一化
+    const sealed = await sealEvent(host, { text: '私密剧情' })
+    expect((await openEvent<{ text: string }>(guest, sealed)).text).toBe('私密剧情')
+    // 密码大小写不同 → 不同密钥
+    const wrong = await deriveRoomKey(roomSecret('abc234', 'letmein'))
+    await expect(openEvent(wrong, sealed)).rejects.toThrow()
+  })
+
+  it('keyProof：同种子同散列、不同种子不同散列，且与明文种子不同', async () => {
+    expect(await keyProof('abc234')).toBe(await keyProof('abc234'))
+    expect(await keyProof('abc234')).not.toBe(await keyProof('abc234:pwd'))
+    expect(await keyProof('abc234')).toMatch(/^[0-9a-f]{64}$/)
   })
 
   it('不同房间码的密钥解不开彼此的密文', async () => {

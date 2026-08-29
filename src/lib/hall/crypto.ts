@@ -2,27 +2,41 @@
  * 端到端加密：房间码即密钥种子。
  * 服务器只转发密文（iv||ct 的 base64），全程无法获知任何房间内容——
  * 这是「A 档纯中继」模式下服务器自证哑管道的关键。
+ *
+ * 上锁房间：密钥种子 = 房间码:密码，密码不出本机；服务器只保存
+ * keyProof（派生密钥的 SHA-256 单向散列）用于加入校验，无法还原密码或密钥。
  */
-const SALT = 'rp-hall-v1' // 固定盐仅作域分隔；秘密性由房间码本身承担
+const SALT = 'rp-hall-v1' // 固定盐仅作域分隔；秘密性由房间码/密码承担
 const ITERATIONS = 150_000
 
-/** 房间码（归一化为小写）→ AES-GCM 256 会话密钥 */
-export async function deriveRoomKey(code: string): Promise<CryptoKey> {
+/** 密钥种子（房间码，或上锁房间的「房间码:密码」），归一化为小写 */
+export function roomSecret(code: string, password?: string): string {
+  const c = code.trim().toLowerCase()
+  return password ? `${c}:${password}` : c
+}
+
+/** 种子 → 原始密钥位（PBKDF2-SHA256, 256bit）。种子不作大小写归一化——密码区分大小写 */
+export async function deriveRoomBits(secret: string): Promise<ArrayBuffer> {
   const enc = new TextEncoder()
-  const keyMat = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(code.trim().toLowerCase()),
-    'PBKDF2',
-    false,
-    ['deriveKey'],
-  )
-  return crypto.subtle.deriveKey(
+  const keyMat = await crypto.subtle.importKey('raw', enc.encode(secret), 'PBKDF2', false, ['deriveBits'])
+  return crypto.subtle.deriveBits(
     { name: 'PBKDF2', salt: enc.encode(SALT), iterations: ITERATIONS, hash: 'SHA-256' },
     keyMat,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
+    256,
   )
+}
+
+/** 种子 → AES-GCM 256 会话密钥（兼容旧签名：传房间码或 roomSecret 结果均可） */
+export async function deriveRoomKey(secret: string): Promise<CryptoKey> {
+  const bits = await deriveRoomBits(secret)
+  return crypto.subtle.importKey('raw', bits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+/** 加入校验串：派生密钥的 SHA-256 十六进制（服务器只存这个，不存密码） */
+export async function keyProof(secret: string): Promise<string> {
+  const bits = await deriveRoomBits(secret)
+  const h = await crypto.subtle.digest('SHA-256', bits)
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 function toB64(bytes: Uint8Array): string {

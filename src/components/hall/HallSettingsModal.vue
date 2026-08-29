@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { relayUrlOf, saveWorldNote } from '../../lib/hall/useHall'
+import { loadWorldNote, relayUrlOf, saveWorldNote } from '../../lib/hall/useHall'
 import { useSettingsStore } from '../../stores/settings'
 import { toast } from '../../lib/toast'
 
@@ -8,7 +8,7 @@ const emit = defineEmits<{ close: [] }>()
 
 const settings = useSettingsStore()
 const relayUrl = ref(settings.settings.hallWsUrl || '')
-const worldNote = ref('')
+const worldNote = ref(loadWorldNote())
 const saved = ref(false)
 
 onMounted(() => {
@@ -19,7 +19,7 @@ async function save() {
   const u = relayUrl.value.trim()
   if (u === relayUrlOf('')) await settings.patch({ hallWsUrl: '' })
   else await settings.patch({ hallWsUrl: u })
-  await saveWorldNote(worldNote.value)
+  await saveWorldNote(worldNote.value.trim())
   saved.value = true
   toast.success('跑团设置已保存')
   setTimeout(() => saved.value = false, 1200)

@@ -150,3 +150,6 @@
   .hall-layout { grid-template-columns: 1fr; }
   .hall-side-col { display: none; }
 }
+
+/* 大厅补充 */
+.hall-online { color: var(--text-2); font-size: 0.85rem; }

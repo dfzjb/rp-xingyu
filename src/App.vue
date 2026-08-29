@@ -106,8 +106,8 @@ const NAV: { key: View; icon: typeof MessagesSquare; label: string }[] = [
   { key: 'memory', icon: BrainCircuit, label: '记忆系统' },
   { key: 'uitpl', icon: LayoutTemplate, label: 'UI 模板' },
   { key: 'plaza', icon: Store, label: '卡片广场' },
-  { key: 'aiworkshop', icon: Wand2, label: 'AI 工作台' },
   { key: 'hall', icon: Dices, label: '在线跑团' },
+  { key: 'aiworkshop', icon: Wand2, label: 'AI 工作台' },
   { key: 'data', icon: DatabaseBackup, label: '导入 / 导出' },
 ]
 
