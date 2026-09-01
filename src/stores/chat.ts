@@ -27,6 +27,14 @@ export const useChatStore = defineStore('chat', () => {
   const loaded = ref(false)
   const generating = ref(false)
   const generatingError = ref('')
+  /** UI 模板变量更新状态条（主模型更新块 / 副模型兜底分析），一段时间后自动消失 */
+  const uiTplStatus = ref<{ state: 'running' | 'ok' | 'empty' | 'skip' | 'error'; message: string; at: number } | null>(null)
+  let uiTplStatusTimer: ReturnType<typeof setTimeout> | null = null
+  function setUiTplStatus(state: 'running' | 'ok' | 'empty' | 'skip' | 'error', message: string) {
+    uiTplStatus.value = { state, message, at: Date.now() }
+    if (uiTplStatusTimer) clearTimeout(uiTplStatusTimer)
+    uiTplStatusTimer = setTimeout(() => { uiTplStatus.value = null }, 12000)
+  }
   /** 一次性临时规范指令（随下次发送附带，旧版语义） */
   const pendingInstruction = ref('')
   /** 每会话上次自动提炼时的楼层数 */
@@ -281,6 +289,7 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 副模型兜底分析（旧版"副模型分析"语义）：主模型回复未携带变量更新块时，
    * 后台按最近楼层让副模型补一次变量分析并回写。静默失败，不阻塞对话。
+   * 副模型取 uiTemplateAuxModel → memoryAuxModel（仅用显式配置的模型，不默认占用主模型）。
    */
   async function runAuxTemplateAnalysis(
     s: ChatSession,
@@ -295,13 +304,18 @@ export const useChatStore = defineStore('chat', () => {
     const cfg: ApiConfig = {
       baseUrl: settings.settings.apiBaseUrl,
       apiKey: settings.settings.apiKey,
-      model: settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel || settings.activeModel,
+      model: settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel,
       temperature: 0.3,
-      maxTokens: 2000,
+      maxTokens: 3000,
       reasoningEffort: 'minimal',
     }
-    if (!cfg.apiKey || !cfg.model) return
+    if (!cfg.apiKey) return
+    if (!cfg.model) {
+      setUiTplStatus('skip', '面板变量：未配置分析副模型，兜底未运行（UI 模板页可配置）')
+      return
+    }
     auxAnalysisRunning.add(s.id)
+    setUiTplStatus('running', '面板变量：副模型分析中…')
     try {
       const floors = path
         .slice(-8)
@@ -315,15 +329,22 @@ export const useChatStore = defineStore('chat', () => {
       if (!messages.length) return
       const raw = await chatOnce(cfg, messages)
       const updates = parseUpdatesPayload(parseCot(raw).main)
-      if (!updates.length) return
+      if (!updates.length) {
+        setUiTplStatus('empty', '面板变量：副模型分析完成，无变化')
+        return
+      }
       const result = applyUiTemplateUpdates(states, uiTpls, updates)
-      if (result.changedCount <= 0) return
+      if (result.changedCount <= 0) {
+        setUiTplStatus('empty', '面板变量：副模型分析完成，无变化')
+        return
+      }
       s.uiTemplateStates = result.states
       // 同步刷新本节点快照，保证分支回滚语义一致
       node.extra = { ...(node.extra || {}), uiTplState: result.states }
+      setUiTplStatus('ok', `面板变量：副模型更新 ${result.changedCount} 项`)
       await persist(s)
-    } catch {
-      // 静默：兜底分析失败不打扰用户
+    } catch (err) {
+      setUiTplStatus('error', `面板变量：副模型分析失败（${(err as Error)?.message || '未知错误'}）`)
     } finally {
       auxAnalysisRunning.delete(s.id)
     }
@@ -456,6 +477,9 @@ export const useChatStore = defineStore('chat', () => {
           effective = result.states
           if (result.changedCount > 0) {
             s.uiTemplateStates = result.states
+            setUiTplStatus('ok', `面板变量：主模型更新 ${result.changedCount} 项`)
+          } else {
+            setUiTplStatus('empty', '面板变量：主模型更新块无变化')
           }
         }
         // 把本节点时点的变量状态快照写到节点上（分支切换/重 roll/删除时按快照回滚）
@@ -511,6 +535,8 @@ export const useChatStore = defineStore('chat', () => {
   async function maybeAutoPatrol(s: ChatSession) {
     const settings = useSettingsStore()
     if (settings.settings.memoryAutoPatrol === false || settings.settings.memoryEngineOn === false) return
+    // 记忆/评判专用副模型未配置时整段跳过（不默认占用主模型）
+    if (!settings.settings.memoryAuxModel) return
     const floors = Math.max(5, settings.settings.memoryPatrolFloors || 20)
     const totalFloors = Object.keys(s.nodes).length
     const last = lastPatrolFloor.get(s.id) ?? -1
@@ -531,8 +557,8 @@ export const useChatStore = defineStore('chat', () => {
       const cfg = {
         baseUrl: settingsCfg.settings.apiBaseUrl,
         apiKey: settingsCfg.settings.apiKey,
-        // 副模型：记忆/评判专用（空则回退主模型）
-        model: settingsCfg.settings.memoryAuxModel || settingsCfg.activeModel,
+        // 副模型：记忆/评判专用（上方已保证非空，不再回退主模型）
+        model: settingsCfg.settings.memoryAuxModel,
         temperature: 0.3,
         maxTokens: 1024,
         reasoningEffort: 'minimal',
@@ -803,7 +829,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, currentSessionId, currentSession, chain, totalBodyChars,
     loaded, generating, generatingError, pendingInstruction,
-    continuing, impersonateResult,
+    continuing, impersonateResult, uiTplStatus,
     load, openCharacter, selectSession, createSession, deleteSession, renameSession,
     send, regenerate, stopGenerating, flushOnUnload, continueLast, impersonate,
     editNode, deleteNode, branchInfo, switchBranch, sessionsOfChar,

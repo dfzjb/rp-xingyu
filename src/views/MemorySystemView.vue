@@ -94,7 +94,7 @@ function auxCfg() {
   const cfg = {
     baseUrl: settings.settings.apiBaseUrl,
     apiKey: settings.settings.apiKey,
-    model: settings.settings.memoryAuxModel || settings.activeModel,
+    model: settings.settings.memoryAuxModel,
     temperature: 0.3,
     maxTokens: 1024,
     reasoningEffort: 'minimal',
@@ -107,8 +107,10 @@ async function startBackfill() {
   if (backfilling.value) return
   const s = chat.sessions.find((x) => x.id === (activeScope.value === 'global' ? chat.currentSessionId : activeScope.value))
   if (!s || !s.activeNodeId) { toast.warning('请先选择一个会话'); return }
+  // 副模型未配置时不回退主模型
+  if (!settings.settings.memoryAuxModel) { toast.warning('请先配置「总结模式副模型」（未配置时不再默认使用主模型）'); return }
   const cfg = auxCfg()
-  if (!cfg) { toast.warning('请先在设置中配置 API Key 与模型'); return }
+  if (!cfg) { toast.warning('请先在设置中配置 API Key'); return }
   // 沿链路取全部节点
   const path: import('../types').MsgNode[] = []
   let cur: import('../types').MsgNode | undefined = s.nodes[s.activeNodeId]
@@ -199,7 +201,7 @@ const embeddingModelOptions = computed(() => {
               />
             </div>
             <div class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
-              <label>总结模式副模型（空 = 用主模型）</label>
+              <label>总结模式副模型（未配置 = 不自动提炼/评判，不再回退主模型）</label>
               <NSelect
                 size="small"
                 filterable

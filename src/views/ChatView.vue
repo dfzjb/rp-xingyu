@@ -386,6 +386,9 @@ function onModelChange(v: string) {
             @click="send"
           ><SendHorizontal /></button>
         </div>
+        <div v-if="chat.uiTplStatus" class="uitpl-status" :data-state="chat.uiTplStatus.state">
+          <span class="dot" />{{ chat.uiTplStatus.message }}
+        </div>
         <div v-if="chat.generatingError" class="composer-tip" style="color: var(--danger)">
           ⚠️ {{ chat.generatingError }}
         </div>

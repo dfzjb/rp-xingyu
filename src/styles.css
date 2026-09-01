@@ -841,6 +841,20 @@ select.session-select option { background: var(--bg-1); }
   display: flex; align-items: center; justify-content: center;
 }
 .composer-tip { font-size: 0.72rem; color: var(--text-2); text-align: center; margin-top: 8px; display: flex; justify-content: center; gap: 6px; align-items: center; }
+/* UI 模板变量更新状态条（主模型更新块 / 副模型兜底） */
+.uitpl-status {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 0.72rem; color: var(--text-2); margin-top: 8px;
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--bg-1); border: 1px solid var(--line);
+  width: fit-content; margin-left: auto; margin-right: auto;
+}
+.uitpl-status .dot { width: 6px; height: 6px; border-radius: 50%; background: #999; flex: none; }
+.uitpl-status[data-state='running'] .dot { background: #8b5cf6; animation: uitpl-pulse 1s ease-in-out infinite; }
+.uitpl-status[data-state='ok'] .dot { background: #22c55e; }
+.uitpl-status[data-state='skip'] .dot { background: #f59e0b; }
+.uitpl-status[data-state='error'] .dot { background: #ef4444; }
+@keyframes uitpl-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 
 /* ============ 角色卡网格 ============ */
 

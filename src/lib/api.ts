@@ -254,15 +254,14 @@ export function streamChat(
   return { abort: () => controller.abort() }
 }
 
-/** 非流式补全（重新生成等场景可复用；目前统一走流式） */
-export async function chatOnce(cfg: ApiConfig, messages: { role: string; content: string }[]): Promise<string> {
-  const url = normalizeBaseUrl(cfg.baseUrl) + '/chat/completions'
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.apiKey },
-    body: JSON.stringify({ model: cfg.model, messages, temperature: cfg.temperature, max_tokens: cfg.maxTokens }),
+/** 非流式补全（对外语义不变）：内部统一走流式通道累积后返回。
+ * 中转站/网关对非流式长请求常按超时掐断（尤其推理模型），SSE 逐块传输可保活。 */
+export function chatOnce(cfg: ApiConfig, messages: { role: string; content: string }[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    streamChat(cfg, messages, {
+      onDelta: () => {},
+      onDone: (full) => resolve(full),
+      onError: reject,
+    })
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${(await resp.text()).slice(0, 300)}`)
-  const j = await resp.json()
-  return j.choices?.[0]?.message?.content || ''
 }

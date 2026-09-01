@@ -282,16 +282,17 @@ function patchAuxModel(v: string | null) {
             <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
               主模型回复里没带变量更新块时（很多卡的自带格式太强，主模型顾不上输出），后台自动用副模型按最近楼层
               补一次变量分析并刷新面板——对齐旧版的二次分析管线。关闭后面板只依赖主模型主动输出更新块。
+              <b>副模型仅在下方显式配置时才运行（不会默认占用主模型）</b>；对话页底部会显示每次变量更新的状态。
             </p>
             <div class="field" style="margin-bottom: 0">
-              <label>分析用副模型（空 = 记忆副模型 → 主模型）</label>
+              <label>分析用副模型（未选择 = 用记忆系统副模型；两者都未配置则不兜底）</label>
               <NSelect
                 size="small"
                 filterable
                 tag
                 clearable
                 :value="auxModelValue"
-                placeholder="用记忆副模型或主模型，也可选择/输入模型名"
+                placeholder="选一个快而便宜的模型（未配置则不兜底）"
                 :options="groupedModelOptions(settings.modelsCache, 'text')"
                 @update:value="patchAuxModel"
               />

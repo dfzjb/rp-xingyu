@@ -43,16 +43,21 @@ onMounted(async () => {
 async function evaluate() {
   const s = chat.currentSession
   if (!s || evaluating.value) return
+  // 记忆/评判专用副模型：未配置就不跑（不默认占用主模型）
+  if (!settings.settings.memoryAuxModel) {
+    toast.warning('请先在「记忆系统」配置副模型（未配置时不再默认使用主模型）')
+    return
+  }
   const cfg = {
     baseUrl: settings.settings.apiBaseUrl,
     apiKey: settings.settings.apiKey,
-    model: settings.settings.memoryAuxModel || settings.activeModel,
+    model: settings.settings.memoryAuxModel,
     temperature: 0.2,
     maxTokens: 800,
     reasoningEffort: 'minimal',
   }
-  if (!cfg.apiKey || !cfg.model) {
-    toast.warning('请先在设置中配置 API Key 与模型')
+  if (!cfg.apiKey) {
+    toast.warning('请先在设置中配置 API Key')
     return
   }
   evaluating.value = true
