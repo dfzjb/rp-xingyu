@@ -1,0 +1,36 @@
+# 角色卡广场服务 systemd 单元（dfzjb.site）
+#
+# 安装步骤（服务器上执行，假设仓库克隆到 /opt/rp-site）：
+#   sudo cp deploy/plaza.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rp-plaza
+#   systemctl status rp-plaza
+#
+# 注意：
+# - ExecStart 的 node 路径用 `which node` 确认（nvm 装的 node 需写绝对路径）
+# - PLAZA_TOKEN 必配：管理口令（审核上架/拒绝/下架凭据）。上传本身开放无需口令，
+#   但不配口令 = 陌生人传的卡永远停在待审区无人上架
+# - PLAZA_DIR 指向广场数据目录（index.json + cards/ + pending/ + review.json），备份就是备份这个目录
+# - 8788 只应由 nginx 反代对外，不要在防火墙放行 8788
+
+[Unit]
+Description=RP plaza card service (node:http, upload + hosting)
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/rp-site
+ExecStart=/usr/bin/node server/plaza.js
+Environment=PLAZA_PORT=8788
+Environment=PLAZA_DIR=/opt/rp-site/public/plaza
+Environment=PLAZA_TOKEN=请改成强口令
+Environment=PLAZA_RATE_PER_HOUR=60
+Restart=always
+RestartSec=3
+# 加固：进程只能写广场数据目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/rp-site/public/plaza
+
+[Install]
+WantedBy=multi-user.target

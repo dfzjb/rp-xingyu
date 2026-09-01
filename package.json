@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "plaza": "node server/plaza.js"
   },
   "dependencies": {
     "dexie": "^4.2.0",
