@@ -198,6 +198,13 @@ export function stCardToOurs(obj: unknown, avatarDataUri: string): CharacterCard
       ?? o.uiTemplates
       ?? o.ui_templates,
     ),
+    stateSyncRules: Array.isArray(ext.legacy_state_sync_rules)
+      ? ext.legacy_state_sync_rules
+      : Array.isArray(data.stateSyncRules)
+        ? data.stateSyncRules
+        : Array.isArray(o.stateSyncRules)
+          ? o.stateSyncRules
+          : [],
   }
   return card
 }
@@ -240,6 +247,7 @@ export function oursCardToSt(card: CharacterCard): Record<string, unknown> {
         legacy_watermark: 'rp-site',
         regex_scripts: card.regexScripts || [],
         legacy_ui_templates: card.uiTemplates || [],
+        legacy_state_sync_rules: card.stateSyncRules || [],
       },
     },
   }

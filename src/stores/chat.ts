@@ -11,7 +11,8 @@ import { evaluateNpcsAutonomously } from '../lib/affinity'
 import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
 import { normalizeUiTemplates } from '../lib/uitemplate'
-import { parseUiTemplateUpdates, applyUiTemplateUpdates, stripUiTemplateUpdates } from '../lib/ui-template-state'
+import { applyUiTemplateUpdates } from '../lib/ui-template-state'
+import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks } from '../lib/state-sync'
 import { useCharactersStore } from './characters'
 import { usePersonasStore } from './personas'
 import { useSettingsStore } from './settings'
@@ -313,6 +314,8 @@ export const useChatStore = defineStore('chat', () => {
     // （优先沿父链取最近快照 —— 重 roll 时即父链时点；无快照回退会话级状态，兼容旧数据）
     const uiTpls = normalizeUiTemplates(char.uiTemplates).filter((t) => t.enabled)
     const uiStates = baselineUiState(s, node.parentId) ?? s.uiTemplateStates ?? {}
+    // 变量回写规则：内置方言 + 卡级规则（正则驱动，兼容酒馆等外部更新格式）
+    const syncRules = [...builtinStateSyncRules(), ...normalizeStateSyncRules(char.stateSyncRules)]
 
     // 记忆/好感度/提示词组装：任一步失败都不能把占位节点卡在 streaming 态
     let messages: ReturnType<typeof buildPrompt>
@@ -371,6 +374,7 @@ export const useChatStore = defineStore('chat', () => {
         affinityLines,
         uiTemplates: uiTpls,
         uiTemplateStates: uiStates,
+        stateSyncRules: syncRules,
       })
     } catch (err) {
       return fail(`（上下文组装失败：${(err as Error)?.message || String(err)}）`)
@@ -387,9 +391,9 @@ export const useChatStore = defineStore('chat', () => {
       generating.value = false
       abortFn = null
 
-      // 解析 AI 回复中的 <ui_template_updates> 并更新会话状态
+      // 解析 AI 回复中的变量更新指令（规则化：内置方言 + 卡级规则）并更新会话状态
       if (uiTpls.length) {
-        const updates = parseUiTemplateUpdates(node.content)
+        const updates = extractStateSyncUpdates(node.content, syncRules)
         let effective = uiStates
         if (updates.length) {
           const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
@@ -400,9 +404,9 @@ export const useChatStore = defineStore('chat', () => {
         }
         // 把本节点时点的变量状态快照写到节点上（分支切换/重 roll/删除时按快照回滚）
         node.extra = { ...(node.extra || {}), uiTplState: effective }
-        // 从可见正文中剥离变量更新块
-        node.content = stripUiTemplateUpdates(node.content)
       }
+      // 从可见正文中剥离变量更新块（无模板也要剥，机器指令不该出现在正文里）
+      node.content = stripStateSyncBlocks(node.content, syncRules)
 
       // 用量统计：最后一条用户消息正文为发送口径
       const lastUser = [...path].reverse().find((n) => n.role === 'user')
@@ -538,10 +542,13 @@ export const useChatStore = defineStore('chat', () => {
     // UI 模板（续写沿用该消息自身的最新快照；无快照回退会话级状态）
     const uiTpls = normalizeUiTemplates(char.uiTemplates).filter((t) => t.enabled)
     const uiStates = baselineUiState(s, lastAi.id) ?? s.uiTemplateStates ?? {}
+    // 变量回写规则（与主生成同源）
+    const syncRules = [...builtinStateSyncRules(), ...normalizeStateSyncRules(char.stateSyncRules)]
     // 构建提示词：历史里已带最后一条 AI 消息，不再重复发送其正文
     const msgs = buildPrompt(char, persona ?? undefined, chain, settings.settings.contextMessages, {
       uiTemplates: uiTpls,
       uiTemplateStates: uiStates,
+      stateSyncRules: syncRules,
     })
     if (lastAi.content.trim()) {
       msgs.push({
@@ -568,16 +575,18 @@ export const useChatStore = defineStore('chat', () => {
         done = true
         generating.value = false
         abortFn = null
-        // 解析 UI 模板更新 + 快照回滚点
+        // 解析变量更新指令（规则化）+ 快照回滚点
         if (uiTpls.length) {
-          const updates = parseUiTemplateUpdates(lastAi.content)
+          const updates = extractStateSyncUpdates(lastAi.content, syncRules)
+          let effective = uiStates
           if (updates.length) {
             const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
+            effective = result.states
             if (result.changedCount > 0) s.uiTemplateStates = result.states
-            lastAi.extra = { ...(lastAi.extra || {}), uiTplState: result.states }
           }
-          lastAi.content = stripUiTemplateUpdates(lastAi.content)
+          lastAi.extra = { ...(lastAi.extra || {}), uiTplState: effective }
         }
+        lastAi.content = stripStateSyncBlocks(lastAi.content, syncRules)
         // 用量统计：续写无新用户输入，发送口径计 0
         void recordUsage(0, Math.max(0, lastAi.content.length - baseLen))
         void persist(s)

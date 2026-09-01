@@ -97,6 +97,8 @@ export interface CharacterCard {
   worldInfo: unknown[]
   regexScripts: unknown[]
   uiTemplates: UiTemplate[]
+  /** 变量回写规则（state-sync，正则驱动）：让非 旧版 方言的更新指令也能回写面板变量 */
+  stateSyncRules?: unknown[]
   /** 收藏置顶（旧版 ☆）：收藏的卡在角色列表/侧栏置顶 */
   fav?: boolean
   /** 收藏时间（同为收藏时按此排序，最近的更靠前） */

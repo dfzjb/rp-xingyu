@@ -53,6 +53,24 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
 
+const isPlainObj = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v)
+
+/** 把 patch 深合并进 target（对象递归合并、数组/标量整体替换），返回变更字段数 */
+function deepMergeCount(target: Record<string, unknown>, patch: Record<string, unknown>): number {
+  let changed = 0
+  for (const [k, v] of Object.entries(patch)) {
+    const oldVal = target[k]
+    if (isPlainObj(oldVal) && isPlainObj(v)) {
+      changed += deepMergeCount(oldVal, v)
+    } else if (JSON.stringify(oldVal) !== JSON.stringify(v)) {
+      target[k] = v
+      changed++
+    }
+  }
+  return changed
+}
+
 /** 模板变量的静态兜底链（与渲染端 renderUiTemplateHtml 的回退顺序保持一致） */
 function fallbackVars(t: UiTemplate): Record<string, unknown> {
   return t.variableState ?? t.initialVariableState ?? {}
@@ -127,8 +145,8 @@ export function buildUiTemplateUpdateInstruction(
   ].join('\n')
 }
 
-/** 解析单个更新块内的 JSON 载荷为更新列表 */
-function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
+/** 解析单个更新块内的 JSON 载荷为更新列表（state-sync 规则引擎复用） */
+export function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
   const body = String(raw || '')
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/i, '')
@@ -168,6 +186,26 @@ export function parseUiTemplateUpdates(text: string): UiTemplateUpdate[] {
   return out
 }
 
+/** 向单个模板状态写入一个路径值（对象深合并），返回变更数 */
+function writeToState(state: Record<string, unknown>, key: string, value: unknown): number {
+  const oldVal = getByPath(state, key)
+  if (isPlainObj(oldVal) && isPlainObj(value)) {
+    // 双方都是对象 → 深合并（模型常只回传嵌套变量的部分字段，整体替换会丢兄弟键）
+    const merged = clone(oldVal)
+    const n = deepMergeCount(merged, value)
+    if (n > 0) {
+      setByPath(state, key, merged)
+      return n
+    }
+    return 0
+  }
+  if (JSON.stringify(oldVal) !== JSON.stringify(value)) {
+    setByPath(state, key, value)
+    return 1
+  }
+  return 0
+}
+
 /** 把 AI 返回的更新应用到状态映射，返回新映射和变更数 */
 export function applyUiTemplateUpdates(
   states: UiTemplateStateMap,
@@ -177,25 +215,32 @@ export function applyUiTemplateUpdates(
   const next = clone(states)
   let changedCount = 0
 
+  // 模板初始化状态（缺省用卡内初始值）
+  const ensureState = (tpl: UiTemplate): Record<string, unknown> => {
+    if (!next[tpl.id]) next[tpl.id] = clone(tpl.initialVariableState ?? {})
+    return next[tpl.id]
+  }
+
   for (const upd of updates) {
     if (!upd || !upd.variables || typeof upd.variables !== 'object') continue
-    // 找到目标模板
-    const targets = upd.id
-      ? templates.filter((t) => t.id === upd.id)
-      : upd.name
-        ? templates.filter((t) => t.name === upd.name)
-        : templates.length === 1 ? [templates[0]] : []
+    // 找到目标模板：显式 id/name → 精确匹配；省略目标时单模板直取；
+    // 多模板则逐路径智能路由（写入已拥有该路径的模板；全新路径回退写入全部）
+    let targets: UiTemplate[]
+    if (upd.id) targets = templates.filter((t) => t.id === upd.id)
+    else if (upd.name) targets = templates.filter((t) => t.name === upd.name)
+    else if (templates.length === 1) targets = [templates[0]]
+    else targets = templates
     if (!targets.length) continue
 
-    for (const tpl of targets) {
-      if (!next[tpl.id]) next[tpl.id] = clone(tpl.initialVariableState ?? {})
-      const state = next[tpl.id]
-      for (const [key, value] of Object.entries(upd.variables)) {
-        const oldVal = getByPath(state, key)
-        if (JSON.stringify(oldVal) !== JSON.stringify(value)) {
-          setByPath(state, key, value)
-          changedCount++
-        }
+    for (const [key, value] of Object.entries(upd.variables)) {
+      const owners = targets.length > 1
+        ? (() => {
+            const owning = templates.filter((t) => getByPath(next[t.id] ?? clone(t.initialVariableState ?? {}), key) !== undefined)
+            return owning.length ? owning : targets
+          })()
+        : targets
+      for (const tpl of owners) {
+        changedCount += writeToState(ensureState(tpl), key, value)
       }
     }
   }

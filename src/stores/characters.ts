@@ -71,6 +71,7 @@ export const useCharactersStore = defineStore('characters', () => {
       worldInfo: [],
       regexScripts: [],
       uiTemplates: [],
+      stateSyncRules: [],
     }
   }
 

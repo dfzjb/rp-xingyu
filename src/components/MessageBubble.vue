@@ -4,13 +4,13 @@
  * 楼层与字数 / 编辑 / 删除 / 重roll / 分支切换
  */
 import { computed, ref } from 'vue'
-import { BrainCircuit, RefreshCw, Pencil, Trash2, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { BrainCircuit, RefreshCw, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { MsgNode } from '../types'
 import { parseCot, bodyLength } from '../lib/cot'
 import { applyRegexScripts, PLACEMENT_AI_OUTPUT, PLACEMENT_USER_INPUT } from '../lib/regex'
 import { renderMarkdown, isFullHtmlMessage } from '../lib/markdown'
 import { normalizeUiTemplates, renderUiTemplateFrame, buildHtmlDocument, HTML_IFRAME_SANDBOX } from '../lib/uitemplate'
-import { stripUiTemplateUpdates } from '../lib/ui-template-state'
+import { builtinStateSyncRules, normalizeStateSyncRules, stripStateSyncBlocks } from '../lib/state-sync'
 import { useChatStore } from '../stores/chat'
 import { useCharactersStore } from '../stores/characters'
 import { useSettingsStore } from '../stores/settings'
@@ -28,6 +28,12 @@ const settings = useSettingsStore()
 const regexScripts = computed(() => {
   const char = characters.list.find((c) => c.uuid === chat.currentSession?.charUuid)
   return settings.settings.regexEnabled !== false ? char?.regexScripts : undefined
+})
+
+// 变量回写规则（内置方言 + 卡级规则）：流式渲染时实时剥离机器更新块
+const syncRules = computed(() => {
+  const char = characters.list.find((c) => c.uuid === chat.currentSession?.charUuid)
+  return [...builtinStateSyncRules(), ...normalizeStateSyncRules(char?.stateSyncRules)]
 })
 
 // 旧版迁移消息里已渲染的 UI 模板块快照（完整容器 HTML，原样 v-html 展示）
@@ -63,7 +69,7 @@ const tplTop = computed(() => liveTplBlocks.value?.top ?? legacyTplBlocks.value?
 const tplBottom = computed(() => liveTplBlocks.value?.bottom ?? legacyTplBlocks.value?.bottom ?? [])
 
 const parsed = computed(() => {
-  const raw = stripUiTemplateUpdates(props.node.content || '')
+  const raw = stripStateSyncBlocks(props.node.content || '', syncRules.value)
   const p = parseCot(raw)
   // 整页 HTML 消息（开场白向导等）不走正则/markdown，直接沙箱 iframe 渲染；
   // 显示层正则（如"段落首行缩进"）会把每行包 <p>，破坏 <!DOCTYPE 文档结构
@@ -75,11 +81,16 @@ const parsed = computed(() => {
   return p
 })
 const rendered = computed(() => renderMarkdown(parsed.value.main))
-const isHtml = computed(() => isFullHtmlMessage(stripUiTemplateUpdates(props.node.content || '')))
+const isHtml = computed(() => isFullHtmlMessage(stripStateSyncBlocks(props.node.content || '', syncRules.value)))
 /** 整页 HTML 消息：注入 reset 样式 + 高度自适配 + triggerSlash 桥（与 UI 模板同构） */
 const htmlDoc = computed(() => (isHtml.value ? buildHtmlDocument(parsed.value.main) : ''))
 const htmlSandbox = HTML_IFRAME_SANDBOX
 const wordCount = computed(() => bodyLength(parsed.value.main))
+
+/** 整页 HTML 面板折叠：当前活动楼层默认展开（开场向导即见即用），历史楼层默认收起，可手动切换 */
+const htmlAutoExpand = computed(() => chat.currentSession?.activeNodeId === props.node.id)
+const htmlUserToggled = ref<boolean | null>(null)
+const htmlExpanded = computed(() => (isHtml.value ? (htmlUserToggled.value ?? htmlAutoExpand.value) : false))
 
 const cotOpen = ref(false)
 const reasoningOpen = ref(false)
@@ -88,7 +99,7 @@ const editing = ref(false)
 const editBuffer = ref('')
 
 function startEdit() {
-  editBuffer.value = stripUiTemplateUpdates(props.node.content)
+  editBuffer.value = stripStateSyncBlocks(props.node.content, syncRules.value)
   editing.value = true
 }
 async function saveEdit() {
@@ -156,15 +167,24 @@ const lightbox = defineModel<{ src: string } | null>('lightbox', { default: null
           <div class="ui-tpl-block" v-html="tplTop.join('')" />
         </template>
 
-        <!-- 旧版整页 HTML 消息：沙箱 iframe 隔离渲染（脚本可执行，高度自适配，triggerSlash 桥接） -->
-        <iframe
-          v-if="isHtml"
-          class="html-frame"
-          :sandbox="htmlSandbox"
-          scrolling="no"
-          :srcdoc="htmlDoc"
-          title="HTML 消息（已沙箱隔离）"
-        />
+        <!-- 旧版整页 HTML 消息：默认仅活动楼层展开；可收起避免历史大面板霸屏 -->
+        <template v-if="isHtml">
+          <button v-if="!htmlExpanded" class="btn sm html-toggle" @click="htmlUserToggled = true">
+            <ChevronDown :size="13" /> 展开 UI 面板（HTML · {{ wordCount }} 字）
+          </button>
+          <template v-else>
+            <button class="btn sm html-toggle" @click="htmlUserToggled = false">
+              <ChevronUp :size="13" /> 收起 UI 面板（{{ wordCount }} 字）
+            </button>
+            <iframe
+              class="html-frame"
+              :sandbox="htmlSandbox"
+              scrolling="no"
+              :srcdoc="htmlDoc"
+              title="HTML 消息（已沙箱隔离）"
+            />
+          </template>
+        </template>
         <div v-else-if="parsed.main" class="md-body" :class="{ 'stream-caret': node.streaming }" v-html="rendered" />
 
         <!-- UI 模板块：bottom 位置 -->

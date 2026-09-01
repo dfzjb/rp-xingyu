@@ -2,12 +2,17 @@
 /**
  * UI 模板管理：选择角色卡 → 查看其 uiTemplates 条目（沙箱 iframe 预览 + JSON 编辑）。
  * 数据随角色卡保存（旧版 uiTemplates 字段兼容）。
+ * 附：变量回写规则（state-sync）——正则驱动的更新指令方言，让其他生态角色卡也能回写面板变量。
  */
 import { computed, ref, watch } from 'vue'
-import { LayoutTemplate, Save } from 'lucide-vue-next'
+import { LayoutTemplate, Save, Workflow } from 'lucide-vue-next'
 import { NSwitch } from 'naive-ui'
 import { useCharactersStore } from '../stores/characters'
 import { buildHtmlDocument, normalizeUiTemplates, renderUiTemplateHtml, type UiTemplate } from '../lib/uitemplate'
+import {
+  builtinStateSyncRules, normalizeStateSyncRule, normalizeStateSyncRules,
+  type StateSyncRule,
+} from '../lib/state-sync'
 
 const characters = useCharactersStore()
 
@@ -16,6 +21,11 @@ const editing = ref(false)
 const editJson = ref('[]')
 const editError = ref('')
 const previewIdx = ref(0)
+
+// ── 变量回写规则 ──
+const rulesEditing = ref(false)
+const rulesJson = ref('[]')
+const rulesError = ref('')
 
 interface UiTpl {
   id?: string
@@ -43,6 +53,8 @@ const previewDoc = computed(() => {
 watch(selectedUuid, () => {
   previewIdx.value = 0
   editing.value = false
+  rulesEditing.value = false
+  rulesError.value = ''
 })
 
 function isEnabled(t: UiTpl): boolean {
@@ -76,6 +88,68 @@ async function saveEdit() {
   } catch (err) {
     editError.value = `JSON 解析失败：${(err as Error).message}`
   }
+}
+
+// ── 变量回写规则：列表 / JSON 编辑 / 预设 ──
+const builtins = builtinStateSyncRules()
+const cardRules = computed(() => normalizeStateSyncRules(card.value?.stateSyncRules))
+
+function startRulesEdit() {
+  if (!card.value) return
+  rulesJson.value = JSON.stringify(card.value.stateSyncRules || [], null, 2)
+  rulesEditing.value = true
+  rulesError.value = ''
+}
+
+async function saveRulesEdit() {
+  if (!card.value) return
+  try {
+    const parsed = JSON.parse(rulesJson.value)
+    if (!Array.isArray(parsed)) throw new Error('必须是数组')
+    const invalid = parsed.filter((r) => !normalizeStateSyncRule(r))
+    if (invalid.length) throw new Error(`有 ${invalid.length} 条规则无效（缺 pattern 或正则编译失败）`)
+    card.value.stateSyncRules = parsed
+    await characters.put(card.value)
+    rulesEditing.value = false
+    rulesError.value = ''
+  } catch (err) {
+    rulesError.value = `${(err as Error).message}`
+  }
+}
+
+const RULE_PRESETS: Record<string, StateSyncRule> = {
+  updateVariable: {
+    name: '酒馆变量块 <UpdateVariable>',
+    pattern: '<UpdateVariable\\b[^>]*>([\\s\\S]*?)</UpdateVariable>',
+    flags: 'gi',
+    dialect: 'json_block',
+  },
+  setvar: {
+    name: '酒馆宏 {{setvar}}',
+    pattern: '\\{\\{set(?:global)?var::(?<path>[^:{}]+)::(?<value>[\\s\\S]*?)\\}\\}',
+    flags: 'g',
+    dialect: 'macro_setvar',
+  },
+  customTag: {
+    name: '自定义更新块 <状态>',
+    pattern: '<状态(?=[\\s>/])[^>]*>([\\s\\S]*?)</状态>',
+    flags: 'gi',
+    dialect: 'json_block',
+  },
+  rpHub: {
+    name: '旧版 更新块 <ui_template_updates>',
+    pattern: '<ui_template_updates\\b[^>]*>([\\s\\S]*?)</ui_template_updates>',
+    flags: 'gi',
+    dialect: 'legacy_json',
+  },
+}
+
+async function addRulePreset(kind: keyof typeof RULE_PRESETS) {
+  if (!card.value) return
+  const list = Array.isArray(card.value.stateSyncRules) ? [...(card.value.stateSyncRules as unknown[])] : []
+  list.push({ ...RULE_PRESETS[kind] })
+  card.value.stateSyncRules = list
+  await characters.put(card.value)
 }
 </script>
 
@@ -143,6 +217,48 @@ async function saveEdit() {
               </template>
             </div>
           </template>
+
+          <!-- 变量回写规则（state-sync）：正则驱动的更新指令方言 -->
+          <div class="section-title" style="font-size: 0.98rem; margin-top: 22px"><Workflow /> 变量回写规则</div>
+          <p style="font-size: 0.78rem; color: var(--text-2); margin-bottom: 10px; line-height: 1.7">
+            从 AI 回复中提取面板变量更新指令的正则规则（三步闭环的"解析"端，格式不限于 旧版 方言）。
+            内置规则全局生效；酒馆 <code v-pre>{{setvar}}</code> 宏默认关闭，需要时从下方预设添加为卡级规则。
+          </p>
+
+          <div class="tpl-list">
+            <div v-for="b in builtins" :key="b.id" class="tpl-row" style="cursor: default; opacity: 0.9">
+              <span>内置 · {{ b.name }}</span>
+              <span style="font-size: 0.72rem" :style="{ color: b.disabled ? 'var(--text-2)' : 'var(--accent, #8b5cf6)' }">
+                {{ b.disabled ? '默认关闭（可从预设启用）' : '默认启用' }}
+              </span>
+            </div>
+            <div v-for="(r, i) in cardRules" :key="i" class="tpl-row" style="cursor: default">
+              <span>卡级 · {{ r.name }}</span>
+              <span style="font-size: 0.72rem; color: var(--text-2)">方言 {{ r.dialect }}</span>
+            </div>
+            <div v-if="!cardRules.length" style="font-size: 0.76rem; color: var(--text-2); padding: 2px 13px">
+              该卡暂无自定义规则
+            </div>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px">
+            <button class="btn sm" @click="addRulePreset('updateVariable')">＋ 酒馆 &lt;UpdateVariable&gt;</button>
+            <button class="btn sm" @click="addRulePreset('setvar')">＋ 酒馆 <span v-pre>{{setvar}}</span> 宏</button>
+            <button class="btn sm" @click="addRulePreset('customTag')">＋ 自定义标签块</button>
+            <button class="btn sm" @click="addRulePreset('rpHub')">＋ 旧版 更新块</button>
+            <button class="btn sm" style="margin-left: auto" @click="rulesEditing ? saveRulesEdit() : startRulesEdit()">
+              <Save :size="13" />{{ rulesEditing ? '保存规则' : '编辑 JSON' }}
+            </button>
+          </div>
+
+          <div v-if="rulesEditing" class="card-panel" style="padding: 12px">
+            <textarea v-model="rulesJson" class="textarea mono" rows="10" />
+            <div v-if="rulesError" class="danger-box">{{ rulesError }}</div>
+            <div style="font-size: 0.74rem; color: var(--text-2); line-height: 1.7; margin-top: 6px">
+              字段：name（名称）、pattern（正则源码，捕获组 1 = JSON 载荷；macro_setvar 用命名组 &lt;path&gt;/&lt;value&gt;）、
+              flags（默认 g）、dialect（legacy_json / json_block / macro_setvar）、template（固定目标模板 id 或名称，可选）、disabled。
+            </div>
+          </div>
         </template>
 
         <div v-else-if="characters.list.length" class="chat-empty" style="padding: 40px 0">

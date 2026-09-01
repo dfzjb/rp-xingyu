@@ -11,7 +11,8 @@ import { applyRegexScripts, PLACEMENT_AI_OUTPUT, PLACEMENT_USER_INPUT } from './
 import { replaceMacros } from './macros'
 import { resolveWorldInfo, type WorldInfoEntry } from './worldinfo'
 import type { UiTemplate } from './uitemplate'
-import { buildUiTemplateContextPrompt, buildUiTemplateUpdateInstruction, stripUiTemplateUpdates } from './ui-template-state'
+import { buildUiTemplateContextPrompt, buildUiTemplateUpdateInstruction } from './ui-template-state'
+import { builtinStateSyncRules, stripStateSyncBlocks, type StateSyncRule } from './state-sync'
 
 export interface ApiMessage {
   role: 'system' | 'user' | 'assistant'
@@ -32,12 +33,15 @@ export interface PromptOptions {
   uiTemplates?: UiTemplate[]
   /** 会话级 UI 模板变量状态 */
   uiTemplateStates?: Record<string, Record<string, unknown>>
+  /** 变量回写规则（含内置方言）；历史消息按此剥离更新块，缺省按内置规则剥离 */
+  stateSyncRules?: StateSyncRule[]
 }
 
-/** 节点正文：剥思维链 → 剥 UI 模板更新块 → 应用正则 → 替换宏 */
+/** 节点正文：剥思维链 → 剥变量更新块（规则化）→ 应用正则 → 替换宏 */
 function nodeBody(n: MsgNode, opts: PromptOptions, ctx: { charName: string; userName: string }): string {
   let main = parseCot(n.content || '').main
-  main = stripUiTemplateUpdates(main)
+  // 缺省用内置规则兜底（含原生 <ui_template_updates>），传入卡级合并规则时按规则剥离
+  main = stripStateSyncBlocks(main, opts.stateSyncRules ?? builtinStateSyncRules())
   if (opts.regexEnabled && opts.regexScripts) {
     const placement = n.role === 'user' ? PLACEMENT_USER_INPUT : PLACEMENT_AI_OUTPUT
     main = applyRegexScripts(main, opts.regexScripts, placement, 'send')

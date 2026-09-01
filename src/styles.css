@@ -1163,6 +1163,15 @@ html[data-theme='light'] .err-banner { background: rgba(255, 235, 235, 0.97); }
   border-radius: 12px;
   min-height: 120px;
 }
+/* HTML 面板折叠条 */
+.html-toggle {
+  width: 100%;
+  justify-content: center;
+  margin: 4px 0;
+  opacity: 0.85;
+  border-style: dashed;
+}
+.html-toggle:hover { opacity: 1; }
 
 /* 搜索结果 */
 .search-result {
