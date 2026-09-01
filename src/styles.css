@@ -444,6 +444,7 @@ body {
 }
 .textarea { resize: vertical; min-height: 84px; line-height: 1.65; }
 .input.mono { font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.82rem; }
+.mono { font-family: 'Cascadia Code', Consolas, monospace; }
 select.input option { background: var(--bg-1); color: var(--text-0); }
 
 /* Naive UI 组件圆角/配色统一 */

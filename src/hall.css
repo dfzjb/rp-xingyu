@@ -15,6 +15,13 @@
 .hall-room-chip b { color: var(--accent-soft); letter-spacing: 2px; }
 .hall-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-left: 6px; }
 .hall-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.hall-brief-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3);
+  color: var(--accent-soft); border-radius: 999px; padding: 3px 12px;
+  font-size: 0.78rem; cursor: pointer; white-space: nowrap; font: inherit; font-size: 0.78rem;
+}
+.hall-brief-chip:hover { border-color: var(--accent); }
 .hall-tag {
   font-size: 11px; color: var(--accent-soft); border: 1px solid var(--accent);
   border-radius: 6px; padding: 1px 6px; white-space: nowrap;
@@ -30,6 +37,32 @@
 /* 剧情流 */
 .hall-stream { flex: 1; overflow-y: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; }
 .hall-empty-hint { text-align: center; margin-top: 40px; }
+
+/* 分线页签：全体主线 + 自定义线（个人线/合作线） */
+.hall-scene-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 10px 16px 0; background: var(--bg-1);
+}
+.hall-scene-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); background: var(--bg-2); color: var(--text-1);
+  font: inherit; font-size: 12.5px; padding: 4px 12px; border-radius: 999px; cursor: pointer;
+}
+.hall-scene-tab:hover { border-color: var(--accent); }
+.hall-scene-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.hall-scene-tab.closed { opacity: 0.55; }
+.hall-scene-who { font-size: 10px; opacity: 0.75; font-weight: 400; }
+.hall-scene-add {
+  border: 1px dashed var(--line); background: transparent; color: var(--text-2);
+  border-radius: 999px; padding: 4px 10px; cursor: pointer; line-height: 1;
+}
+.hall-scene-add:hover { color: var(--accent-soft); border-color: var(--accent); }
+.hall-scene-op { border: 0; background: transparent; color: var(--text-2); cursor: pointer; padding: 4px; border-radius: 6px; line-height: 1; }
+.hall-scene-op:hover { color: var(--danger); }
+.hall-scene-form { display: flex; gap: 6px; flex: 1; min-width: 240px; }
+.hall-scene-form .input { font-size: 12px; padding: 4px 9px; min-width: 0; }
+.hall-scene-select { width: auto; font-size: 12px; padding: 4px 6px; color: var(--text-1); flex: none; }
+.hall-scene-gen { max-width: 130px; }
 
 .hall-msg { display: flex; gap: 10px; max-width: 82%; }
 .hall-msg .hall-avatar {
@@ -89,6 +122,14 @@
 }
 .hall-member-name { font-weight: 600; }
 .hall-dice-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.hall-dice-quick {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 4px 12px; line-height: 1.2;
+}
+.hall-dice-quick b { font-size: 13px; }
+.hall-dice-quick span { font-size: 10px; color: var(--text-2); font-weight: 400; }
+.hall-dice-hint { font-size: 11px; color: var(--text-2); line-height: 1.6; margin: 0 0 10px; }
+.hall-dice-hint b { color: var(--accent-soft); }
 .hall-chip {
   background: var(--bg-2); color: var(--text-0); border: 1px solid var(--line);
   border-radius: 999px; padding: 3px 12px; cursor: pointer; font-size: 13px;
@@ -96,6 +137,52 @@
 .hall-chip:hover { border-color: var(--accent); }
 .hall-row { display: flex; gap: 8px; }
 .hall-row input { flex: 1; min-width: 0; }
+
+/* 战局面板：记忆/道具滑块切换 */
+.hall-state-tabs {
+  display: flex; gap: 4px; background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: 9px; padding: 3px; margin-bottom: 10px;
+}
+.hall-state-tabs button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  border: 0; background: transparent; color: var(--text-2);
+  font: inherit; font-size: 12px; padding: 5px 0; border-radius: 7px; cursor: pointer;
+}
+.hall-state-tabs button.active { background: var(--bg-1); color: var(--accent-soft); font-weight: 600; }
+.hall-state-list { display: flex; flex-direction: column; gap: 6px; max-height: 236px; overflow-y: auto; margin-bottom: 8px; }
+.hall-state-item {
+  display: flex; align-items: flex-start; gap: 6px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 8px; font-size: 12.5px; line-height: 1.55;
+}
+.hall-state-text { flex: 1; min-width: 0; word-break: break-word; }
+.hall-state-note { color: var(--text-2); }
+.hall-state-del {
+  flex: none; border: 0; background: transparent; color: var(--text-2);
+  cursor: pointer; padding: 2px; border-radius: 5px; line-height: 1;
+}
+.hall-state-del:hover { color: var(--danger); background: var(--bg-3); }
+.hall-state-empty { font-size: 12px; color: var(--text-2); line-height: 1.7; padding: 4px 2px; }
+.hall-state-add { display: flex; gap: 6px; }
+.hall-state-add .input { flex: 1; min-width: 0; font-size: 12.5px; padding: 6px 9px; }
+
+/* 侧栏底部常驻区域条：随剧情由 KP 维护，滚动时也钉在底部 */
+.hall-area-bar {
+  position: sticky; bottom: 0; margin-top: auto;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: var(--radius); padding: 9px 12px;
+}
+.hall-area-icon { color: var(--accent-soft); flex: none; }
+.hall-area-label { font-size: 11px; color: var(--text-2); letter-spacing: 1px; flex: none; }
+.hall-area-text { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hall-area-text b { color: var(--accent-soft); }
+.hall-area-none { color: var(--text-2); }
+.hall-area-edit {
+  flex: none; border: 0; background: transparent; color: var(--text-2);
+  cursor: pointer; padding: 3px; border-radius: 6px; line-height: 1;
+}
+.hall-area-edit:hover { color: var(--accent-soft); background: var(--bg-3); }
 
 /* 加入页 */
 .hall-join-wrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; }
@@ -140,3 +227,12 @@
 
 /* 大厅补充 */
 .hall-online { color: var(--text-2); font-size: 0.85rem; }
+
+/* 大厅双栏：左房间列表，右「我的团」面板 */
+.hall-lobby-grid { display: grid; gap: 14px; align-items: start; }
+.hall-lobby-grid.has-side { grid-template-columns: minmax(0, 1fr) 330px; }
+.hall-lobby-side { min-width: 0; }
+@media (max-width: 900px) {
+  .hall-lobby-grid.has-side { grid-template-columns: 1fr; }
+  .camp-panel { position: static; }
+}

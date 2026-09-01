@@ -5,7 +5,9 @@ import type { RoomEvent } from '../../lib/hall/protocol'
 
 const props = defineProps<{
   events: RoomEvent[]
-  streaming: { id: string; text: string } | null
+  streaming: { id: string; text: string; scene?: string } | null
+  /** 当前线还没有剧情时的提示（缺省用全体线的通用文案） */
+  emptyHint?: string
 }>()
 
 type StreamableEvent = Extract<RoomEvent, { k: 'chat' | 'narration' | 'roll' | 'system' }>
@@ -52,7 +54,7 @@ watch(
 <template>
   <div ref="scrollEl" class="hall-stream">
     <p v-if="!events.length && !streaming" class="hall-sys-line hall-empty-hint">
-      剧情流还是空的——聊一句话，KP 就会开口。
+      {{ emptyHint || '剧情流还是空的——聊一句话，KP 就会开口。' }}
     </p>
 
     <template v-for="row in rows" :key="row.id">

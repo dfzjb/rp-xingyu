@@ -19,19 +19,21 @@ const AffinityView = defineAsyncComponent(() => import('./views/AffinityView.vue
 const MemorySystemView = defineAsyncComponent(() => import('./views/MemorySystemView.vue'))
 const UiTemplatesView = defineAsyncComponent(() => import('./views/UiTemplatesView.vue'))
 const PlazaView = defineAsyncComponent(() => import('./views/PlazaView.vue'))
+const PlazaAdminView = defineAsyncComponent(() => import('./views/PlazaAdminView.vue'))
 const AiWorkshopView = defineAsyncComponent(() => import('./views/AiWorkshopView.vue'))
 const DataView = defineAsyncComponent(() => import('./views/DataView.vue'))
 const HallView = defineAsyncComponent(() => import('./views/HallView.vue'))
+import { hasBootInvite } from './lib/hall/useHall' // 静态引入：启动期解析邀请链接
 const MoreModal = defineAsyncComponent(() => import('./components/MoreModal.vue'))
 
-type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'aiworkshop' | 'data' | 'hall'
+type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'plazaadmin' | 'aiworkshop' | 'data' | 'hall'
 
 const settings = useSettingsStore()
 const characters = useCharactersStore()
 const chat = useChatStore()
 const personas = usePersonasStore()
 
-const view = ref<View>('chat')
+const view = ref<View>(hasBootInvite() ? 'hall' : 'chat') // 邀请链接直达在线跑团
 const sidebarOpen = ref(false)
 const moreShow = ref(false)
 const moreTab = ref('presets')
@@ -241,13 +243,14 @@ onMounted(async () => {
             <UiTemplatesView v-if="view === 'uitpl'" />
             <CharactersView v-if="view === 'characters'" @open-ai-workshop="view = 'aiworkshop'" />
             <PlazaView v-if="view === 'plaza'" />
+            <PlazaAdminView v-else-if="view === 'plazaadmin'" @back="switchView('plaza')" />
             <AiWorkshopView v-if="view === 'aiworkshop'" @close="view = 'characters'" @goto="switchView" />
             <DataView v-if="view === 'data'" @finish="switchView('chat')" />
             <HallView v-if="view === 'hall'" />
           </main>
 
           <!-- 「更多」弹窗（首次打开时才加载） -->
-          <MoreModal v-if="moreMounted" v-model:show="moreShow" :initial-tab="moreTab" />
+          <MoreModal v-if="moreMounted" v-model:show="moreShow" :initial-tab="moreTab" @admin="switchView('plazaadmin')" />
 
           <!-- 轻量 toast -->
           <Toaster />
