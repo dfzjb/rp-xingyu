@@ -48,6 +48,15 @@ class MockHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(obj, ensure_ascii=False).encode('utf-8'))
 
+    def do_OPTIONS(self):
+        # 允许从 dev 端口(5273)跨域调用假 API；同源托管 dist 时用不到
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        self.send_header('Access-Control-Max-Age', '86400')
+        self.end_headers()
+
     def _load_keys(self):
         keys = {}
         for f in os.listdir(FIXTURE_DIR):
