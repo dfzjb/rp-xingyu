@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
-  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2, Star,
+  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2, Star, DatabaseBackup,
 } from 'lucide-vue-next'
-import { NTabs, NTabPane } from 'naive-ui'
+import { NDropdown, NTabs, NTabPane } from 'naive-ui'
 import WorldBookEditor from '../components/WorldBookEditor.vue'
 import RegexEditor from '../components/RegexEditor.vue'
 import { useCharactersStore } from '../stores/characters'
@@ -11,7 +11,8 @@ import { useChatStore } from '../stores/chat'
 import type { CharacterCard } from '../types'
 import { importCardFile, oursCardToSt, buildPngCard } from '../lib/cardio'
 import { normalizeUiTemplates } from '../lib/uitemplate'
-import { downloadJson } from '../db'
+import { downloadJson, exportAll, restoreAll } from '../db'
+import { importChatJsonlAuto } from '../lib/migrate'
 
 const emit = defineEmits<{ (e: 'open-ai-workshop'): void }>()
 
@@ -30,23 +31,86 @@ const filtered = computed(() => {
   )
 })
 
-// ── 导入 ──
+// ── 导入：按扩展名/内容自动路由 ──
+// .jsonl → 聊天记录（旧版导出/酒馆导出，按角色名自动挂载）
+// .json  → 新站完整备份 / 旧版备份（含聊天）/ 角色卡 JSON
+// .png   → 角色卡
 async function onImportFiles(e: Event) {
   const files = (e.target as HTMLInputElement).files
   if (!files?.length) return
   importError.value = ''
   importing.value = '导入中…'
+  const notes: string[] = []
   for (const f of Array.from(files)) {
     try {
+      const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase()
+      if (ext === '.jsonl') {
+        const report = await importChatJsonlAuto(await f.text(), f.name.replace(/\.jsonl$/i, ''))
+        await Promise.all([characters.load(), chat.load()])
+        const total = report.chats + report.branches
+        notes.push(`${f.name}：导入 ${total} 个会话 / ${report.messages} 条消息${report.warnings.length ? '（⚠ ' + report.warnings.join('；') + '）' : ''}`)
+        continue
+      }
+      if (ext === '.json') {
+        const obj = JSON.parse(await f.text())
+        if ((obj as { format?: string }).format === 'rp-site-backup') {
+          // 新站原生完整备份：整体恢复并刷新
+          if (!confirm('恢复该备份将覆盖当前全部本地数据，确定继续？')) continue
+          await restoreAll(obj)
+          importing.value = '完整备份已恢复，即将刷新…'
+          setTimeout(() => location.reload(), 900)
+          return
+        }
+        try {
+          // 旧版备份 / 平面键值表：映射写入（不覆盖已有数据）
+          const { parseLegacyBackupFile, migrateLegacyData } = await import('../lib/migrate')
+          const keys = parseLegacyBackupFile(obj)
+          const report = await migrateLegacyData(keys, f.name)
+          await Promise.all([characters.load(), chat.load()])
+          const total = report.characters + report.chats + report.branches + report.personas + report.kvKeys
+          notes.push(`${f.name}：导入完成，共 ${total} 条记录${report.warnings.length ? '（⚠ ' + report.warnings.join('；') + '）' : ''}`)
+          continue
+        } catch { /* 不是备份文件，按角色卡 JSON 处理 */ }
+      }
+      // 角色卡（PNG / SillyTavern JSON）
       const card = await importCardFile(f)
       await characters.put(card)
-      importing.value = `已导入：${card.name}`
+      notes.push(`已导入角色卡：${card.name}`)
     } catch (err) {
-      importError.value = `${f.name}：${(err as Error).message}`
+      importError.value = `${importError.value ? importError.value + '\n' : ''}${f.name}：${(err as Error).message}`
     }
   }
-  setTimeout(() => { importing.value = '' }, 2500)
+  importing.value = notes.length ? notes.join('\n') : ''
+  setTimeout(() => { if (importing.value && !importing.value.includes('即将刷新')) importing.value = '' }, 6000)
   ;(e.target as HTMLInputElement).value = ''
+}
+
+// ── 备份导出（原「导入 / 导出」页的能力并入）──
+const backupOptions = [
+  { label: '旧版格式备份（legacy_backup_*.json，可互导）', key: 'legacy' },
+  { label: '新站完整备份（含重 roll 全部分支）', key: 'native' },
+]
+
+async function onBackupSelect(key: string | number) {
+  try {
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    if (key === 'legacy') {
+      const { exportLegacyBundle } = await import('../lib/legacyExport')
+      const { d1, count } = await exportLegacyBundle()
+      const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+      downloadJson({ d1, ls: {} as Record<string, string> }, `legacy_backup_${stamp}.json`)
+      importing.value = `已下载旧版格式备份（${count} 条记录）`
+    } else {
+      const data = await exportAll()
+      const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+      downloadJson(data, `rp-site-full-backup-${stamp}.json`)
+      importing.value = '已下载新站完整备份（含全部分支与原始键存档）'
+    }
+    setTimeout(() => { importing.value = '' }, 4000)
+  } catch (err) {
+    importError.value = `备份出错：${(err as Error).message}`
+  }
 }
 
 // ── 编辑器 ──
@@ -159,16 +223,19 @@ function onMouseMove(e: MouseEvent) {
           </div>
           <div style="flex: 1" />
           <input v-model="search" class="input" style="max-width: 220px" placeholder="搜索名称 / 描述…" />
-          <label class="btn" style="cursor: pointer">
-            <Upload />导入 PNG / JSON
-            <input type="file" accept=".png,.json" multiple hidden @change="onImportFiles" />
+          <label class="btn" style="cursor: pointer" title="角色卡 PNG/JSON · 旧版聊天记录与备份 .json/.jsonl">
+            <Upload />导入 PNG / JSON / 备份
+            <input type="file" accept=".png,.json,.jsonl" multiple hidden @change="onImportFiles" />
           </label>
+          <NDropdown trigger="click" :options="backupOptions" @select="onBackupSelect">
+            <button class="btn" title="导出备份文件"><DatabaseBackup />备份</button>
+          </NDropdown>
           <button class="btn" title="空白新建" @click="openNew"><Plus :size="15" /></button>
           <button class="btn primary" @click="emit('open-ai-workshop')"><Wand2 />AI 工作台</button>
         </div>
 
-        <div v-if="importing" class="shiny-text" style="margin-bottom: 10px">{{ importing }}</div>
-        <div v-if="importError" class="danger-box">{{ importError }}</div>
+        <div v-if="importing" class="shiny-text" style="margin-bottom: 10px; white-space: pre-line">{{ importing }}</div>
+        <div v-if="importError" class="danger-box" style="white-space: pre-line">{{ importError }}</div>
 
         <div class="char-grid">
           <div

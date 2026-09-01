@@ -4,7 +4,7 @@ import { darkTheme, lightTheme, zhCN, type GlobalThemeOverrides } from 'naive-ui
 import { globalErrors } from './lib/errors'
 import {
   MessagesSquare, LibraryBig, Settings2, Plus,
-  SunMedium, MoonStar, BarChart3, BrainCircuit, LayoutTemplate, Ellipsis, Heart, Store, Wand2, DatabaseBackup, Dices,
+  SunMedium, MoonStar, BarChart3, BrainCircuit, LayoutTemplate, Ellipsis, Heart, Store, Wand2, Dices,
 } from 'lucide-vue-next'
 import { useSettingsStore } from './stores/settings'
 import { useCharactersStore } from './stores/characters'
@@ -21,12 +21,11 @@ const UiTemplatesView = defineAsyncComponent(() => import('./views/UiTemplatesVi
 const PlazaView = defineAsyncComponent(() => import('./views/PlazaView.vue'))
 const PlazaAdminView = defineAsyncComponent(() => import('./views/PlazaAdminView.vue'))
 const AiWorkshopView = defineAsyncComponent(() => import('./views/AiWorkshopView.vue'))
-const DataView = defineAsyncComponent(() => import('./views/DataView.vue'))
 const HallView = defineAsyncComponent(() => import('./views/HallView.vue'))
 import { hasBootInvite } from './lib/hall/useHall' // 静态引入：启动期解析邀请链接
 const MoreModal = defineAsyncComponent(() => import('./components/MoreModal.vue'))
 
-type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'plazaadmin' | 'aiworkshop' | 'data' | 'hall'
+type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'plazaadmin' | 'aiworkshop' | 'hall'
 
 const settings = useSettingsStore()
 const characters = useCharactersStore()
@@ -110,7 +109,6 @@ const NAV: { key: View; icon: typeof MessagesSquare; label: string }[] = [
   { key: 'plaza', icon: Store, label: '卡片广场' },
   { key: 'hall', icon: Dices, label: '在线跑团' },
   { key: 'aiworkshop', icon: Wand2, label: 'AI 工作台' },
-  { key: 'data', icon: DatabaseBackup, label: '导入 / 导出' },
 ]
 
 function switchView(v: string) {
@@ -130,8 +128,7 @@ function sessionCount(uuid: string) {
 
 /** 处理聊天页空态的快捷跳转 */
 function onChatGoto(target: string) {
-  if (target === 'data') switchView('data')
-  else if (target === 'settings') openMore('settings')
+  if (target === 'settings') openMore('settings')
   else if (target === 'affinity') switchView('affinity')
   else switchView(target)
 }
@@ -223,7 +220,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div v-if="!characters.list.length" class="sidebar-empty-hint">
-                还没有角色卡——去「角色卡管理」新建，或用「导入 / 导出」恢复备份
+                还没有角色卡——去「角色卡管理」导入 PNG / JSON 卡片或备份文件
               </div>
             </div>
 
@@ -245,7 +242,6 @@ onMounted(async () => {
             <PlazaView v-if="view === 'plaza'" />
             <PlazaAdminView v-else-if="view === 'plazaadmin'" @back="switchView('plaza')" />
             <AiWorkshopView v-if="view === 'aiworkshop'" @close="view = 'characters'" @goto="switchView" />
-            <DataView v-if="view === 'data'" @finish="switchView('chat')" />
             <HallView v-if="view === 'hall'" />
           </main>
 

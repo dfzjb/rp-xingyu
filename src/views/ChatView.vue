@@ -11,7 +11,7 @@ import MemoryDrawer from '../components/MemoryDrawer.vue'
 
 const emit = defineEmits<{
   (e: 'open-sidebar'): void
-  (e: 'goto', view: 'characters' | 'data' | 'settings' | 'affinity'): void
+  (e: 'goto', view: 'characters' | 'settings' | 'affinity'): void
 }>()
 
 const chat = useChatStore()
@@ -446,14 +446,13 @@ function onModelChange(v: string) {
       <div style="color: var(--text-1)">从左侧选择角色卡开始对话</div>
 
       <div style="display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; justify-content: center">
-        <button class="btn primary" style="min-width: 220px; padding: 11px 22px" @click="emit('goto', 'data')">
-          📥 导入数据（角色卡 + 聊天记录）
+        <button class="btn primary" style="min-width: 220px; padding: 11px 22px" @click="emit('goto', 'characters')">
+          📥 导入数据（角色卡 + 聊天记录 + 备份）
         </button>
-        <button class="btn" @click="emit('goto', 'data')">📤 导出数据</button>
-        <button class="btn" @click="emit('goto', 'characters')">🃏 角色卡</button>
+        <button class="btn" @click="emit('goto', 'characters')">📤 备份 / 导出</button>
       </div>
       <div style="font-size: 0.78rem; color: var(--text-2); max-width: 420px; text-align: center; line-height: 1.7">
-        支持导入 / 导出 legacy_backup 备份文件
+        在角色卡工坊导入 PNG / JSON / 备份文件，右上角「备份」可导出
       </div>
     </div>
   </div>
