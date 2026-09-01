@@ -84,6 +84,8 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryVectorTopK: 8,
   memoryConcurrency: 10,
   memoryKeepFloors: 32,
+  uiTemplateAuxAnalysis: true,
+  uiTemplateAuxModel: '',
   promptEntries: [],
 }
 

@@ -236,6 +236,12 @@ export interface Settings {
   memoryVectorTopK: number // 向量模式检索条数
   memoryConcurrency: number // 补录并发数
   memoryKeepFloors: number // 保留最近楼层（不参与提炼）
+  /** ── UI 模板副模型分析（旧版"副模型分析"语义）──
+   * 主模型回复未携带变量更新块时，后台用副模型按最近楼层补一次变量分析（对齐旧版二次分析管线）。
+   * 关闭后完全依赖主模型在正文里输出 <ui_template_updates>（或卡级规则方言）。 */
+  uiTemplateAuxAnalysis: boolean
+  /** 副模型（空 = 复用记忆副模型 memoryAuxModel，再空 = 主模型） */
+  uiTemplateAuxModel: string
   /** 提示词预设条目（旧版 presets 模型）：有序、可启停、带角色 */
   promptEntries: PromptPreset[]
   lastActiveCharUuid?: string

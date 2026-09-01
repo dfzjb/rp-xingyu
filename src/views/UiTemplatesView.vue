@@ -5,16 +5,19 @@
  * 附：变量回写规则（state-sync）——正则驱动的更新指令方言，让其他生态角色卡也能回写面板变量。
  */
 import { computed, ref, watch } from 'vue'
-import { LayoutTemplate, Save, Workflow } from 'lucide-vue-next'
-import { NSwitch } from 'naive-ui'
+import { LayoutTemplate, Save, Workflow, Sparkles } from 'lucide-vue-next'
+import { NSwitch, NSelect } from 'naive-ui'
 import { useCharactersStore } from '../stores/characters'
+import { useSettingsStore } from '../stores/settings'
 import { buildHtmlDocument, normalizeUiTemplates, renderUiTemplateHtml, type UiTemplate } from '../lib/uitemplate'
+import { groupedModelOptions } from '../lib/api'
 import {
   builtinStateSyncRules, normalizeStateSyncRule, normalizeStateSyncRules,
   type StateSyncRule,
 } from '../lib/state-sync'
 
 const characters = useCharactersStore()
+const settings = useSettingsStore()
 
 const selectedUuid = ref('')
 const editing = ref(false)
@@ -151,6 +154,12 @@ async function addRulePreset(kind: keyof typeof RULE_PRESETS) {
   card.value.stateSyncRules = list
   await characters.put(card.value)
 }
+
+/** 副模型兜底分析：主模型没输出更新块时后台补一次（对齐旧版二次分析管线） */
+const auxModelValue = computed(() => settings.settings.uiTemplateAuxModel || null)
+function patchAuxModel(v: string | null) {
+  void settings.patch({ uiTemplateAuxModel: v || '' })
+}
 </script>
 
 <template>
@@ -257,6 +266,35 @@ async function addRulePreset(kind: keyof typeof RULE_PRESETS) {
             <div style="font-size: 0.74rem; color: var(--text-2); line-height: 1.7; margin-top: 6px">
               字段：name（名称）、pattern（正则源码，捕获组 1 = JSON 载荷；macro_setvar 用命名组 &lt;path&gt;/&lt;value&gt;）、
               flags（默认 g）、dialect（legacy_json / json_block / macro_setvar）、template（固定目标模板 id 或名称，可选）、disabled。
+            </div>
+          </div>
+
+          <!-- 副模型兜底分析 -->
+          <div class="card-panel" style="padding: 12px; margin-top: 14px">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px">
+              <b style="font-size: 0.85rem; display: flex; align-items: center; gap: 6px"><Sparkles :size="14" /> 副模型兜底分析</b>
+              <NSwitch
+                size="small"
+                :value="settings.settings.uiTemplateAuxAnalysis !== false"
+                @update:value="(v: boolean) => settings.patch({ uiTemplateAuxAnalysis: v })"
+              />
+            </div>
+            <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
+              主模型回复里没带变量更新块时（很多卡的自带格式太强，主模型顾不上输出），后台自动用副模型按最近楼层
+              补一次变量分析并刷新面板——对齐旧版的二次分析管线。关闭后面板只依赖主模型主动输出更新块。
+            </p>
+            <div class="field" style="margin-bottom: 0">
+              <label>分析用副模型（空 = 记忆副模型 → 主模型）</label>
+              <NSelect
+                size="small"
+                filterable
+                tag
+                clearable
+                :value="auxModelValue"
+                placeholder="用记忆副模型或主模型，也可选择/输入模型名"
+                :options="groupedModelOptions(settings.modelsCache, 'text')"
+                @update:value="patchAuxModel"
+              />
             </div>
           </div>
         </template>

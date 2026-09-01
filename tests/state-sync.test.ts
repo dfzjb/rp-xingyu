@@ -7,7 +7,8 @@ import {
   stripStateSyncBlocks,
   type StateSyncRule,
 } from '../src/lib/state-sync'
-import { applyUiTemplateUpdates } from '../src/lib/ui-template-state'
+import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseUpdatesPayload } from '../src/lib/ui-template-state'
+import { parseCot } from '../src/lib/cot'
 import type { UiTemplate } from '../src/lib/uitemplate'
 
 function tpl(id: string, name = id, vars: Record<string, unknown> = {}): UiTemplate {
@@ -147,5 +148,44 @@ describe('端到端：规则提取 → 回写 → 与旧链路互通', () => {
     const r = applyUiTemplateUpdates({}, [t], ups)
     expect(r.states.t1).toEqual({ hp: 77, env_weather: '暴雨' })
     expect(stripStateSyncBlocks(text, builtins).trim()).toBe('剧情正文。')
+  })
+})
+
+describe('buildAuxAnalysisMessages（副模型兜底分析）', () => {
+  it('带全部启用模板的当前变量与最近楼层；无模板或无楼层返回空', () => {
+    const t = tpl('t1', '状态面板', { hp: 5 })
+    const msgs = buildAuxAnalysisMessages(
+      [t],
+      { t1: { hp: 66 } },
+      [
+        { role: 'user', name: '我', content: '我推开门' },
+        { role: 'assistant', name: 'AI', content: '屋里有雨声' },
+      ],
+    )
+    expect(msgs).toHaveLength(2)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].content).toContain('状态面板')
+    expect(msgs[0].content).toContain('"hp": 66')
+    expect(msgs[0].content).toContain('"id"')
+    expect(msgs[1].content).toContain('我推开门')
+    expect(buildAuxAnalysisMessages([], {}, [{ role: 'user', name: '我', content: 'x' }])).toEqual([])
+    expect(buildAuxAnalysisMessages([t], {}, [])).toEqual([])
+  })
+
+  it('禁用模板被排除', () => {
+    const on = tpl('t1', '启用', { hp: 1 })
+    const off = { ...tpl('t2', '停用', { mp: 1 }), enabled: false }
+    const msgs = buildAuxAnalysisMessages([on, off], {}, [{ role: 'user', name: '我', content: 'x' }])
+    expect(msgs[0].content).toContain('启用')
+    expect(msgs[0].content).not.toContain('停用')
+  })
+
+  it('副模型返回的裸 JSON / 围栏 / 标签 / think 包裹都能解析', () => {
+    const bare = '{"updates":[{"id":"t1","variables":{"hp":9}}]}'
+    const want = [{ id: 't1', variables: { hp: 9 } }]
+    expect(parseUpdatesPayload(bare)).toEqual(want)
+    expect(parseUpdatesPayload('```json\n' + bare + '\n```')).toEqual(want)
+    expect(parseUpdatesPayload('<ui_template_updates>' + bare + '</ui_template_updates>')).toEqual(want)
+    expect(parseUpdatesPayload(parseCot('<think>推理</think>' + bare).main)).toEqual(want)
   })
 })

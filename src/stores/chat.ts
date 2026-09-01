@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { db } from '../db'
 import type { ChatSession, CharacterCard, MsgNode, Persona } from '../types'
 import { uuid } from '../lib/id'
-import { streamChat, type ApiConfig } from '../lib/api'
+import { streamChat, chatOnce, type ApiConfig } from '../lib/api'
 import { buildPrompt } from '../lib/prompt'
 import { deepPlain } from '../lib/plain'
 import { distillMemoriesFromChat, backfillMemories, searchVectorMemories } from '../lib/memories'
@@ -11,7 +11,7 @@ import { evaluateNpcsAutonomously } from '../lib/affinity'
 import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
 import { normalizeUiTemplates } from '../lib/uitemplate'
-import { applyUiTemplateUpdates } from '../lib/ui-template-state'
+import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseUpdatesPayload } from '../lib/ui-template-state'
 import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks } from '../lib/state-sync'
 import { useCharactersStore } from './characters'
 import { usePersonasStore } from './personas'
@@ -275,6 +275,60 @@ export const useChatStore = defineStore('chat', () => {
     if (restored) s.uiTemplateStates = restored
   }
 
+  /** 进行中的副模型模板分析（会话级去重，防止连发时叠调用） */
+  const auxAnalysisRunning = new Set<string>()
+
+  /**
+   * 副模型兜底分析（旧版"副模型分析"语义）：主模型回复未携带变量更新块时，
+   * 后台按最近楼层让副模型补一次变量分析并回写。静默失败，不阻塞对话。
+   */
+  async function runAuxTemplateAnalysis(
+    s: ChatSession,
+    node: MsgNode,
+    path: MsgNode[],
+    uiTpls: ReturnType<typeof normalizeUiTemplates>,
+    states: Record<string, Record<string, unknown>>,
+  ) {
+    const settings = useSettingsStore()
+    if (settings.settings.uiTemplateAuxAnalysis === false) return
+    if (auxAnalysisRunning.has(s.id)) return
+    const cfg: ApiConfig = {
+      baseUrl: settings.settings.apiBaseUrl,
+      apiKey: settings.settings.apiKey,
+      model: settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel || settings.activeModel,
+      temperature: 0.3,
+      maxTokens: 2000,
+      reasoningEffort: 'minimal',
+    }
+    if (!cfg.apiKey || !cfg.model) return
+    auxAnalysisRunning.add(s.id)
+    try {
+      const floors = path
+        .slice(-8)
+        .map((n) => ({
+          role: n.role === 'user' ? ('user' as const) : ('assistant' as const),
+          name: n.name || '',
+          content: parseCot(n.content || '').main.slice(0, 3000),
+        }))
+        .filter((f) => f.content.trim())
+      const messages = buildAuxAnalysisMessages(uiTpls, states, floors)
+      if (!messages.length) return
+      const raw = await chatOnce(cfg, messages)
+      const updates = parseUpdatesPayload(parseCot(raw).main)
+      if (!updates.length) return
+      const result = applyUiTemplateUpdates(states, uiTpls, updates)
+      if (result.changedCount <= 0) return
+      s.uiTemplateStates = result.states
+      // 同步刷新本节点快照，保证分支回滚语义一致
+      node.extra = { ...(node.extra || {}), uiTplState: result.states }
+      await persist(s)
+    } catch {
+      // 静默：兜底分析失败不打扰用户
+    } finally {
+      auxAnalysisRunning.delete(s.id)
+    }
+  }
+
   /** 组装上下文并流式生成填充既有 assistant 占位节点 */
   async function generateInto(
     s: ChatSession,
@@ -392,9 +446,11 @@ export const useChatStore = defineStore('chat', () => {
       abortFn = null
 
       // 解析 AI 回复中的变量更新指令（规则化：内置方言 + 卡级规则）并更新会话状态
+      let mainUpdateCount = 0
+      let effective = uiStates
       if (uiTpls.length) {
         const updates = extractStateSyncUpdates(node.content, syncRules)
-        let effective = uiStates
+        mainUpdateCount = updates.length
         if (updates.length) {
           const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
           effective = result.states
@@ -407,6 +463,10 @@ export const useChatStore = defineStore('chat', () => {
       }
       // 从可见正文中剥离变量更新块（无模板也要剥，机器指令不该出现在正文里）
       node.content = stripStateSyncBlocks(node.content, syncRules)
+      // 主模型没输出任何更新块 → 副模型兜底分析（后台静默，对齐旧版二次分析管线）
+      if (uiTpls.length && mainUpdateCount === 0) {
+        void runAuxTemplateAnalysis(s, node, path, uiTpls, effective)
+      }
 
       // 用量统计：最后一条用户消息正文为发送口径
       const lastUser = [...path].reverse().find((n) => n.role === 'user')
@@ -576,9 +636,11 @@ export const useChatStore = defineStore('chat', () => {
         generating.value = false
         abortFn = null
         // 解析变量更新指令（规则化）+ 快照回滚点
+        let mainUpdateCount = 0
+        let effective = uiStates
         if (uiTpls.length) {
           const updates = extractStateSyncUpdates(lastAi.content, syncRules)
-          let effective = uiStates
+          mainUpdateCount = updates.length
           if (updates.length) {
             const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
             effective = result.states
@@ -587,6 +649,10 @@ export const useChatStore = defineStore('chat', () => {
           lastAi.extra = { ...(lastAi.extra || {}), uiTplState: effective }
         }
         lastAi.content = stripStateSyncBlocks(lastAi.content, syncRules)
+        // 主模型没输出更新块 → 副模型兜底分析（后台静默）
+        if (uiTpls.length && mainUpdateCount === 0) {
+          void runAuxTemplateAnalysis(s, lastAi, chain, uiTpls, effective)
+        }
         // 用量统计：续写无新用户输入，发送口径计 0
         void recordUsage(0, Math.max(0, lastAi.content.length - baseLen))
         void persist(s)

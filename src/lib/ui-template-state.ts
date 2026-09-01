@@ -145,6 +145,48 @@ export function buildUiTemplateUpdateInstruction(
   ].join('\n')
 }
 
+/**
+ * 副模型二次分析的消息组（旧版"副模型分析"语义，融合为单次调用）：
+ * 主模型回复未携带变量更新块时，用副模型按最近楼层补一次变量分析。
+ * 返回固定 JSON（{"updates":[…]}），解析复用 parseUpdatesPayload。
+ */
+export function buildAuxAnalysisMessages(
+  templates: UiTemplate[],
+  states: UiTemplateStateMap,
+  recentFloors: { role: 'user' | 'assistant'; name: string; content: string }[],
+): { role: 'system' | 'user'; content: string }[] {
+  const enabled = templates.filter((t) => t.enabled && t.htmlTemplate)
+  if (!enabled.length || !recentFloors.length) return []
+
+  const payload = enabled.map((t) => ({
+    id: t.id,
+    name: t.name || 'UI模板',
+    currentVariables: states[t.id] ?? fallbackVars(t),
+    variableSchema: t.variableSchema || '',
+  }))
+
+  const system = [
+    '你是旧版的UI变量更新器。根据用户消息里提供的最近对话，更新UI模板中受剧情影响的变量。',
+    '只返回JSON，不要解释，不要输出Markdown。',
+    '返回格式固定为 {"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}]}。',
+    'variables 只包含有变化的路径；值可以是文字、数字、对象或JSON数组。',
+    '装备栏、背包、动态、聊天记录这类列表字段可直接返回完整数组，也可用 "feed.0.text" 这种路径更新单项。',
+    '没有变化则返回 {"updates":[]}。不要修改HTML，不要编造模板未定义的字段，变量路径必须与当前变量完全一致。',
+    '',
+    '模板与当前变量如下：',
+    JSON.stringify(payload, null, 2),
+  ].join('\n')
+
+  const user = recentFloors
+    .map((f) => `[${f.role === 'user' ? f.name || '用户' : f.name || 'AI'}]：${f.content}`)
+    .join('\n\n')
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: `最近对话如下：\n\n${user}` },
+  ]
+}
+
 /** 解析单个更新块内的 JSON 载荷为更新列表（state-sync 规则引擎复用） */
 export function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
   const body = String(raw || '')
