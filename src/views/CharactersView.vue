@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
-  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2,
+  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2, Star,
 } from 'lucide-vue-next'
 import { NTabs, NTabPane } from 'naive-ui'
 import WorldBookEditor from '../components/WorldBookEditor.vue'
@@ -187,11 +187,15 @@ function onMouseMove(e: MouseEvent) {
                 <span v-if="(c.regexScripts || []).length" class="chip">正则 {{ c.regexScripts.length }}</span>
                 <span v-if="(c.uiTemplates || []).length" class="chip">UI {{ c.uiTemplates.length }}</span>
               </div>
+              <div v-if="c.fav" class="fav-badge" title="已收藏置顶"><Star :size="12" /></div>
               <div class="cover-title">{{ c.name }}</div>
               <div class="hover-actions" @click.stop>
                 <button class="btn sm" @click="openEdit(c)"><Pencil :size="13" />编辑</button>
                 <button class="btn sm" @click="exportJson(c)"><FileJson :size="13" />JSON</button>
                 <button class="btn sm" @click="exportPng(c)"><ImageDown :size="13" />PNG</button>
+                <button class="btn sm" :class="{ 'fav-on': c.fav }" @click="characters.toggleFav(c.uuid)">
+                  <Star :size="13" class="star-ic" :class="{ faved: c.fav }" />{{ c.fav ? '已收藏' : '收藏' }}
+                </button>
                 <button class="btn sm danger" @click="removeCard(c)"><Trash2 :size="13" />删除</button>
               </div>
             </div>

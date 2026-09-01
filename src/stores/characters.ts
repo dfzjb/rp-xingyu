@@ -10,19 +10,36 @@ export const useCharactersStore = defineStore('characters', () => {
   const list = ref<CharacterCard[]>([])
   const loaded = ref(false)
 
+  /** 列表排序：收藏置顶（同收藏按 favAt 最近的在前），其余最近创建/导入在前 */
+  function sortList(rows: CharacterCard[]) {
+    rows.sort((a, b) =>
+      ((b.fav === true ? 1 : 0) - (a.fav === true ? 1 : 0))
+      || (b.favAt || 0) - (a.favAt || 0)
+      || (b.createdAt || 0) - (a.createdAt || 0))
+  }
+
   async function load() {
     const rows = await db.characters.toArray()
-    // 最近创建/导入在前
-    rows.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    sortList(rows)
     list.value = rows
     loaded.value = true
   }
 
   async function put(card: CharacterCard) {
-    await db.characters.put(deepPlain(card))
-    const i = list.value.findIndex((c) => c.uuid === card.uuid)
-    if (i >= 0) list.value[i] = card
-    else list.value.unshift(card)
+    const plain = deepPlain(card) as CharacterCard
+    await db.characters.put(plain)
+    const i = list.value.findIndex((c) => c.uuid === plain.uuid)
+    if (i >= 0) list.value.splice(i, 1, plain)
+    else list.value.unshift(plain)
+    sortList(list.value)
+  }
+
+  /** 收藏置顶开关（旧版 ☆）：收藏的卡排到列表最前 */
+  async function toggleFav(uuidStr: string) {
+    const c = list.value.find((x) => x.uuid === uuidStr)
+    if (!c) return
+    const fav = !(c.fav === true)
+    await put({ ...c, fav, favAt: fav ? Date.now() : c.favAt })
   }
 
   async function remove(uuidStr: string) {
@@ -57,5 +74,5 @@ export const useCharactersStore = defineStore('characters', () => {
     }
   }
 
-  return { list, loaded, load, put, remove, emptyCard }
+  return { list, loaded, load, put, remove, toggleFav, emptyCard }
 })

@@ -97,6 +97,10 @@ export interface CharacterCard {
   worldInfo: unknown[]
   regexScripts: unknown[]
   uiTemplates: UiTemplate[]
+  /** 收藏置顶（旧版 ☆）：收藏的卡在角色列表/侧栏置顶 */
+  fav?: boolean
+  /** 收藏时间（同为收藏时按此排序，最近的更靠前） */
+  favAt?: number
   [k: string]: unknown
 }
 

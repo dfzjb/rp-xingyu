@@ -22,7 +22,7 @@ npm install
 npm run dev        # http://127.0.0.1:5273
 npm run build      # 产物在 dist/，base='./' 支持任意子路径部署
 npm run typecheck  # vue-tsc 类型检查
-npm test           # Vitest 单元测试（157 项，覆盖引擎层、db 持久化、跑团与广场服务）
+npm test           # Vitest 单元测试（165 项，覆盖引擎层、db 持久化、跑团、广场服务与旧版迁移）
 ```
 
 ## CI

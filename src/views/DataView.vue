@@ -15,6 +15,7 @@ import { exportAll, restoreAll, downloadJson, db } from '../db'
 import type { MigrateReport } from '../types'
 import { uuid } from '../lib/id'
 import { toast } from '../lib/toast'
+import { looksLikeLegacyChatJsonl, importLegacyChatJsonl } from '../lib/migrate'
 
 const emit = defineEmits<{ (e: 'finish'): void }>()
 
@@ -31,8 +32,28 @@ async function onJsonlPicked(e: Event) {
   if (!f) return
   jsonlBusy.value = true
   try {
+    const text = await f.text()
+    // 旧版「导出聊天记录」格式（legacy-branch-chat）：按角色名自动挂载，含全部分支
+    if (looksLikeLegacyChatJsonl(text)) {
+      const report = await importLegacyChatJsonl(text)
+      await chat.load()
+      await characters.load()
+      const parts = [
+        report.chats ? `${report.chats} 条主线` : '',
+        report.branches ? `${report.branches} 个分支` : '',
+      ].filter(Boolean)
+      const total = report.chats + report.branches
+      if (!total) {
+        toast.success('这些会话已存在（重复导入），未覆盖')
+      } else {
+        toast.success(`已导入「${f.name}」：${parts.join(' + ') || `${total} 个会话`}，共 ${report.messages} 条消息`)
+      }
+      if (report.warnings.length) importError.value = report.warnings.join('；')
+      return
+    }
+    // 酒馆 JSONL（{name, is_user, mes} 每行一条）
     if (!jsonlCharUuid.value) throw new Error('请先选择要挂载到的角色')
-    const lines = (await f.text()).trim().split('\n')
+    const lines = text.trim().split('\n')
     type JsonlMsg = { name?: string; is_user?: boolean; mes?: string }
     const msgs: JsonlMsg[] = []
     for (const line of lines) {
@@ -41,7 +62,7 @@ async function onJsonlPicked(e: Event) {
         if (o && typeof o.mes === 'string') msgs.push(o as JsonlMsg)
       } catch { /* 跳过元数据行 */ }
     }
-    if (!msgs.length) throw new Error('未找到消息（首行可能是元数据）')
+    if (!msgs.length) throw new Error('未找到消息（既不是旧版导出，也不像酒馆 JSONL）')
 
     const nodes: Record<string, import('../types').MsgNode> = {}
     let prev: string | null = null
@@ -222,7 +243,11 @@ async function onFilePicked(e: Event) {
 
           <!-- JSONL 聊天导入 -->
           <div style="margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line-strong)">
-            <div class="section-title" style="font-size: 0.9rem"><MessagesSquare /> 导入酒馆聊天记录（JSONL）</div>
+            <div class="section-title" style="font-size: 0.9rem"><MessagesSquare /> 导入聊天记录（JSONL）</div>
+            <p style="font-size: 0.78rem; color: var(--text-2); line-height: 1.7; margin-bottom: 8px">
+              旧版「导出聊天记录」的 <code>.jsonl</code>（含全部分支）会<strong>按角色名自动挂载</strong>，无需选择角色；<br />
+              酒馆格式的 JSONL 请先在下方选择要挂载到的角色。
+            </p>
             <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center">
               <NSelect
                 v-model:value="jsonlCharUuid"

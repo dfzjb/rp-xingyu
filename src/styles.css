@@ -913,6 +913,19 @@ select.session-select option { background: var(--bg-1); }
 }
 .char-card:hover .hover-actions { opacity: 1; }
 
+/* 收藏置顶：封面右上角常驻角标 + 操作条里的星标按钮态 */
+.char-card .fav-badge {
+  position: absolute; top: 9px; right: 9px; z-index: 2;
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(12, 15, 24, 0.72);
+  color: #f5b73d;
+  box-shadow: 0 0 0 1px rgba(245, 183, 61, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.char-card .fav-badge svg { fill: #f5b73d; }
+.hover-actions .btn.fav-on { border-color: rgba(245, 183, 61, 0.6); color: #f5b73d; }
+.hover-actions .star-ic.faved { fill: #f5b73d; color: #f5b73d; }
+
 /* ============ 弹窗 ============ */
 
 .modal-mask {
