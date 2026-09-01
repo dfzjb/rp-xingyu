@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
-  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2, Star, DatabaseBackup,
+  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2, Star,
 } from 'lucide-vue-next'
-import { NDropdown, NTabs, NTabPane } from 'naive-ui'
+import { NTabs, NTabPane } from 'naive-ui'
 import WorldBookEditor from '../components/WorldBookEditor.vue'
 import RegexEditor from '../components/RegexEditor.vue'
 import { useCharactersStore } from '../stores/characters'
@@ -11,7 +11,7 @@ import { useChatStore } from '../stores/chat'
 import type { CharacterCard } from '../types'
 import { importCardFile, oursCardToSt, buildPngCard } from '../lib/cardio'
 import { normalizeUiTemplates } from '../lib/uitemplate'
-import { downloadJson, exportAll, restoreAll } from '../db'
+import { downloadJson, restoreAll } from '../db'
 import { importChatJsonlAuto } from '../lib/migrate'
 
 const emit = defineEmits<{ (e: 'open-ai-workshop'): void }>()
@@ -83,34 +83,6 @@ async function onImportFiles(e: Event) {
   importing.value = notes.length ? notes.join('\n') : ''
   setTimeout(() => { if (importing.value && !importing.value.includes('即将刷新')) importing.value = '' }, 6000)
   ;(e.target as HTMLInputElement).value = ''
-}
-
-// ── 备份导出（原「导入 / 导出」页的能力并入）──
-const backupOptions = [
-  { label: '旧版格式备份（legacy_backup_*.json，可互导）', key: 'legacy' },
-  { label: '新站完整备份（含重 roll 全部分支）', key: 'native' },
-]
-
-async function onBackupSelect(key: string | number) {
-  try {
-    const d = new Date()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    if (key === 'legacy') {
-      const { exportLegacyBundle } = await import('../lib/legacyExport')
-      const { d1, count } = await exportLegacyBundle()
-      const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-      downloadJson({ d1, ls: {} as Record<string, string> }, `legacy_backup_${stamp}.json`)
-      importing.value = `已下载旧版格式备份（${count} 条记录）`
-    } else {
-      const data = await exportAll()
-      const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
-      downloadJson(data, `rp-site-full-backup-${stamp}.json`)
-      importing.value = '已下载新站完整备份（含全部分支与原始键存档）'
-    }
-    setTimeout(() => { importing.value = '' }, 4000)
-  } catch (err) {
-    importError.value = `备份出错：${(err as Error).message}`
-  }
 }
 
 // ── 编辑器 ──
@@ -223,13 +195,10 @@ function onMouseMove(e: MouseEvent) {
           </div>
           <div style="flex: 1" />
           <input v-model="search" class="input" style="max-width: 220px" placeholder="搜索名称 / 描述…" />
-          <label class="btn" style="cursor: pointer" title="角色卡 PNG/JSON · 旧版聊天记录与备份 .json/.jsonl">
-            <Upload />导入 PNG / JSON / 备份
+          <label class="btn" style="cursor: pointer" title="角色卡 PNG/JSON · 聊天记录 .jsonl · 备份 .json（自动识别）">
+            <Upload />导入 PNG / JSON
             <input type="file" accept=".png,.json,.jsonl" multiple hidden @change="onImportFiles" />
           </label>
-          <NDropdown trigger="click" :options="backupOptions" @select="onBackupSelect">
-            <button class="btn" title="导出备份文件"><DatabaseBackup />备份</button>
-          </NDropdown>
           <button class="btn" title="空白新建" @click="openNew"><Plus :size="15" /></button>
           <button class="btn primary" @click="emit('open-ai-workshop')"><Wand2 />AI 工作台</button>
         </div>
