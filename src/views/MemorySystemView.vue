@@ -175,18 +175,6 @@ const embeddingModelOptions = computed(() => {
           </div>
 
           <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px">
-            <div class="field" style="width: 220px; margin-bottom: 0">
-              <label>记忆模式</label>
-              <n-select
-                size="small"
-                :value="settings.settings.memoryMode || 'summary'"
-                :options="[
-                  { label: '总结模式（全量注入）', value: 'summary' },
-                  { label: '向量模式（语义检索）', value: 'vector' },
-                ]"
-                @update:value="(v: string) => settings.patch({ memoryMode: v as never })"
-              />
-            </div>
             <div class="field" style="width: 130px; margin-bottom: 0">
               <label>提炼详略</label>
               <n-select
@@ -200,49 +188,6 @@ const embeddingModelOptions = computed(() => {
                 @update:value="(v: string) => settings.patch({ memorySummaryStyle: v as never })"
               />
             </div>
-            <div class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
-              <label>总结模式副模型（未配置 = 不自动提炼/评判，不再回退主模型）</label>
-              <NSelect
-                size="small"
-                filterable
-                tag
-                clearable
-                :value="settings.settings.memoryAuxModel || null"
-                placeholder="用主模型，或选择/输入模型名"
-                :options="groupedModelOptions(settings.modelsCache, 'text')"
-                @update:value="(v: string | null) => settings.patch({ memoryAuxModel: v || '' })"
-              />
-            </div>
-          </div>
-
-          <div v-if="settings.settings.memoryMode === 'vector'" style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px">
-            <div class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
-              <label>Embedding 模型</label>
-              <NSelect
-                size="small"
-                filterable
-                tag
-                :value="settings.settings.memoryEmbeddingModel || 'text-embedding-3-small'"
-                placeholder="输入 embedding 模型名"
-                :options="embeddingModelOptions"
-                @update:value="(v: string) => settings.patch({ memoryEmbeddingModel: v })"
-              />
-            </div>
-            <div class="field" style="width: 130px; margin-bottom: 0">
-              <label>检索条数</label>
-              <input class="input" type="number" min="1" max="30" :value="settings.settings.memoryVectorTopK || 8" @change="settings.patch({ memoryVectorTopK: Number(($event.target as HTMLInputElement).value) || 8 })" />
-            </div>
-          </div>
-
-          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end">
-            <div class="field" style="width: 96px; margin-bottom: 0">
-              <label>补录并发</label>
-              <input class="input" type="number" min="1" max="20" :value="settings.settings.memoryConcurrency || 10" @change="settings.patch({ memoryConcurrency: Number(($event.target as HTMLInputElement).value) || 10 })" />
-            </div>
-            <div class="field" style="width: 116px; margin-bottom: 0">
-              <label>保留最近楼层</label>
-              <input class="input" type="number" min="0" :value="settings.settings.memoryKeepFloors || 32" @change="settings.patch({ memoryKeepFloors: Number(($event.target as HTMLInputElement).value) || 32 })" />
-            </div>
             <div class="field" style="width: 116px; margin-bottom: 0">
               <label>巡逻触发楼数</label>
               <input class="input" type="number" min="5" max="200" :value="settings.settings.memoryPatrolFloors || 20" @change="settings.patch({ memoryPatrolFloors: Number(($event.target as HTMLInputElement).value) || 20 })" />
@@ -251,7 +196,74 @@ const embeddingModelOptions = computed(() => {
               <label>记忆注入上限</label>
               <input class="input" type="number" min="200" max="8000" step="100" :value="settings.settings.memoryCharLimit || 1500" @change="settings.patch({ memoryCharLimit: Number(($event.target as HTMLInputElement).value) || 1500 })" />
             </div>
-            <button class="btn sm primary" style="flex-shrink: 0; margin-bottom: 2px" :disabled="backfilling || !!backfillProgress && backfillProgress.done < (backfillProgress.total || 1)" @click="startBackfill">
+          </div>
+
+          <details class="mem-adv" :open="settings.settings.memoryMode === 'vector'">
+            <summary>
+              高级设置：记忆模式 / 副模型 / 向量检索
+              <span v-if="!settings.settings.memoryAuxModel" class="mem-adv-warn">（副模型未配置：不会自动提炼 / 评判 / 补录）</span>
+            </summary>
+            <div style="display: flex; gap: 12px; flex-wrap: wrap; margin: 10px 0 0">
+              <div class="field" style="width: 220px; margin-bottom: 0">
+                <label>记忆模式</label>
+                <n-select
+                  size="small"
+                  :value="settings.settings.memoryMode || 'summary'"
+                  :options="[
+                    { label: '总结模式（全量注入）', value: 'summary' },
+                    { label: '向量模式（语义检索）', value: 'vector' },
+                  ]"
+                  @update:value="(v: string) => settings.patch({ memoryMode: v as never })"
+                />
+              </div>
+              <div class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
+                <label>总结模式副模型（未配置 = 不自动提炼/评判，不再回退主模型）</label>
+                <NSelect
+                  size="small"
+                  filterable
+                  tag
+                  clearable
+                  :value="settings.settings.memoryAuxModel || null"
+                  placeholder="用主模型，或选择/输入模型名"
+                  :options="groupedModelOptions(settings.modelsCache, 'text')"
+                  @update:value="(v: string | null) => settings.patch({ memoryAuxModel: v || '' })"
+                />
+              </div>
+            </div>
+
+            <div v-if="settings.settings.memoryMode === 'vector'" style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px">
+              <div class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
+                <label>Embedding 模型</label>
+                <NSelect
+                  size="small"
+                  filterable
+                  tag
+                  :value="settings.settings.memoryEmbeddingModel || 'text-embedding-3-small'"
+                  placeholder="输入 embedding 模型名"
+                  :options="embeddingModelOptions"
+                  @update:value="(v: string) => settings.patch({ memoryEmbeddingModel: v })"
+                />
+              </div>
+              <div class="field" style="width: 130px; margin-bottom: 0">
+                <label>检索条数</label>
+                <input class="input" type="number" min="1" max="30" :value="settings.settings.memoryVectorTopK || 8" @change="settings.patch({ memoryVectorTopK: Number(($event.target as HTMLInputElement).value) || 8 })" />
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px">
+              <div class="field" style="width: 96px; margin-bottom: 0">
+                <label>补录并发</label>
+                <input class="input" type="number" min="1" max="20" :value="settings.settings.memoryConcurrency || 10" @change="settings.patch({ memoryConcurrency: Number(($event.target as HTMLInputElement).value) || 10 })" />
+              </div>
+              <div class="field" style="width: 116px; margin-bottom: 0">
+                <label>保留最近楼层</label>
+                <input class="input" type="number" min="0" :value="settings.settings.memoryKeepFloors || 32" @change="settings.patch({ memoryKeepFloors: Number(($event.target as HTMLInputElement).value) || 32 })" />
+              </div>
+            </div>
+          </details>
+
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-top: 12px">
+            <button class="btn sm primary" style="flex-shrink: 0" :disabled="backfilling || !!backfillProgress && backfillProgress.done < (backfillProgress.total || 1)" @click="startBackfill">
               {{ backfilling ? '补录中…' : '补录记忆' }}
             </button>
           </div>
@@ -322,4 +334,14 @@ const embeddingModelOptions = computed(() => {
 html[data-theme='light'] .mem-item { background: #f6f8fd; }
 .mem-content { min-height: 44px; font-size: 0.82rem; margin-bottom: 7px; }
 .mem-foot { display: flex; align-items: center; gap: 8px; }
+.mem-adv { margin-bottom: 4px; }
+.mem-adv summary {
+  cursor: pointer; font-size: 0.78rem; color: var(--text-2);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 7px 12px; background: var(--bg-1);
+  user-select: none; line-height: 1.5;
+}
+.mem-adv summary:hover { color: var(--text-1); }
+.mem-adv[open] summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.mem-adv-warn { color: #f59e0b; }
 </style>

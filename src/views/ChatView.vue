@@ -214,6 +214,31 @@ async function deleteCurrentSession() {
 
 const floorTotal = computed(() => chat.chain.length)
 
+// 生成状态条：连接 / 首字 / 生成各阶段耗时可见（大上下文+排队时首字 30~90 秒属正常，
+// 之前只有三个打字点，用户无法区分"排队"和"卡死"）
+const nowTick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | null = null
+watch(
+  () => chat.generating,
+  (g) => {
+    if (g && !tickTimer) {
+      nowTick.value = Date.now()
+      tickTimer = setInterval(() => { nowTick.value = Date.now() }, 1000)
+    } else if (!g && tickTimer) {
+      clearInterval(tickTimer)
+      tickTimer = null
+    }
+  },
+  { immediate: true },
+)
+const genElapsed = computed(() => Math.max(0, Math.round((nowTick.value - chat.generatingStartedAt) / 1000)))
+const genStatusText = computed(() => {
+  const s = genElapsed.value
+  if (!chat.streamConnected) return `连接中… ${s}s`
+  if (chat.awaitingFirstDelta) return `已连接 · 等待模型首字… ${s}s（大上下文 / 渠道排队可能 30~90 秒）`
+  return `生成中 ${s}s`
+})
+
 // ── 快捷模型切换 ──
 const modelOptions = computed(() => {
   const slotOpts = settings.settings.modelSlots.map((m, i) => ({
@@ -385,6 +410,9 @@ function onModelChange(v: string) {
             :disabled="!inputText.trim() && !pendingImages.length"
             @click="send"
           ><SendHorizontal /></button>
+        </div>
+        <div v-if="chat.generating" class="uitpl-status" data-state="running">
+          <span class="dot" />{{ genStatusText }}
         </div>
         <div v-if="chat.uiTplStatus" class="uitpl-status" :data-state="chat.uiTplStatus.state">
           <span class="dot" />{{ chat.uiTplStatus.message }}

@@ -47,15 +47,15 @@ const legacyTplBlocks = computed<UiTplBlock | null>(() => {
   return top.length || bottom.length ? { top, bottom } : null
 })
 
-// 角色卡自带 UI 模板：挂到当前链路最后一条 AI 消息上（开场白即第一条 AI 消息，首轮即显示）。
+// 角色卡自带 UI 模板：挂到当前链路最后一条"已完成"的 AI 消息上（开场白即第一条 AI 消息，首轮即显示）。
 // 变量由 AI 回复中的 <ui_template_updates> 驱动更新（会话级 uiTemplateStates）。
+// 生成中的新回复不抢走面板（streaming 完成后才迁移过去），避免生成期间面板整体消失。
 const liveTplBlocks = computed<{ top: string[]; bottom: string[] } | null>(() => {
-  if (props.node.streaming) return null
   const char = characters.list.find((c) => c.uuid === chat.currentSession?.charUuid)
   const tpls = normalizeUiTemplates(char?.uiTemplates).filter((t) => t.enabled)
   if (!tpls.length) return null
   let lastAiId = ''
-  for (const n of chat.chain) if (n.role === 'assistant') lastAiId = n.id
+  for (const n of chat.chain) if (n.role === 'assistant' && !n.streaming) lastAiId = n.id
   if (!lastAiId || lastAiId !== props.node.id) return null
   const states = chat.currentSession?.uiTemplateStates || {}
   const sorted = [...tpls].sort((a, b) => a.order - b.order)

@@ -27,6 +27,10 @@ export const useChatStore = defineStore('chat', () => {
   const loaded = ref(false)
   const generating = ref(false)
   const generatingError = ref('')
+  /** 生成状态反馈：开始时间戳 / 连接已建立 / 是否还在等首字（大上下文+排队时首字可达 30~90 秒） */
+  const generatingStartedAt = ref(0)
+  const streamConnected = ref(false)
+  const awaitingFirstDelta = ref(true)
   /** UI 模板变量更新状态条（主模型更新块 / 副模型兜底分析），一段时间后自动消失 */
   const uiTplStatus = ref<{ state: 'running' | 'ok' | 'empty' | 'skip' | 'error'; message: string; at: number } | null>(null)
   let uiTplStatusTimer: ReturnType<typeof setTimeout> | null = null
@@ -457,6 +461,9 @@ export const useChatStore = defineStore('chat', () => {
 
     generating.value = true
     generatingError.value = ''
+    generatingStartedAt.value = Date.now()
+    streamConnected.value = false
+    awaitingFirstDelta.value = true
     let lastPersist = Date.now()
     let finished = false
     const finish = async () => {
@@ -487,6 +494,11 @@ export const useChatStore = defineStore('chat', () => {
       }
       // 从可见正文中剥离变量更新块（无模板也要剥，机器指令不该出现在正文里）
       node.content = stripStateSyncBlocks(node.content, syncRules)
+      // 剥离后正文为空的兜底：不留一个空白气泡（常见于模型只输出了变量更新块、
+      // 内容被安全过滤或 max_tokens 不足）
+      if (!node.content.trim()) {
+        node.content = '（模型本次没有输出正文：可能只输出了面板变量更新、内容被安全过滤，或 max_tokens 不足。可重 roll 或换模型试试。）'
+      }
       // 主模型没输出任何更新块 → 副模型兜底分析（后台静默，对齐旧版二次分析管线）
       if (uiTpls.length && mainUpdateCount === 0) {
         void runAuxTemplateAnalysis(s, node, path, uiTpls, effective)
@@ -502,7 +514,9 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     abortFn = streamChat(cfg, messages, {
+      onOpen: () => { streamConnected.value = true },
       onDelta: (d) => {
+        awaitingFirstDelta.value = false
         node.content += d
         // 流式中节流落库（防崩溃丢内容；whole-doc put 对几 MB 会话足够快）
         if (Date.now() - lastPersist > 3000) {
@@ -511,6 +525,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       },
       onReasoning: (d) => {
+        awaitingFirstDelta.value = false
         node.reasoning = (node.reasoning || '') + d
       },
       onDone: () => { void finish() },
@@ -644,11 +659,16 @@ export const useChatStore = defineStore('chat', () => {
     }
     generating.value = true
     generatingError.value = ''
+    generatingStartedAt.value = Date.now()
+    streamConnected.value = false
+    awaitingFirstDelta.value = true
     let done = false
     let lastPersist = Date.now()
     const baseLen = lastAi.content.length
     abortFn = streamChat(cfg, msgs, {
+      onOpen() { streamConnected.value = true },
       onDelta(d) {
+        awaitingFirstDelta.value = false
         lastAi.content += d
         // 流式中节流落库（与 generateInto 同款，防崩溃丢内容）
         if (Date.now() - lastPersist > 3000) {
@@ -829,6 +849,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, currentSessionId, currentSession, chain, totalBodyChars,
     loaded, generating, generatingError, pendingInstruction,
+    generatingStartedAt, streamConnected, awaitingFirstDelta,
     continuing, impersonateResult, uiTplStatus,
     load, openCharacter, selectSession, createSession, deleteSession, renameSession,
     send, regenerate, stopGenerating, flushOnUnload, continueLast, impersonate,

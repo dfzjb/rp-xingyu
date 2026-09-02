@@ -24,6 +24,8 @@ export interface StreamHandlers {
   onReasoning?: (text: string) => void
   onDone: (full: string, reasoning: string) => void
   onError: (err: Error) => void
+  /** 请求已被服务端接受（HTTP 200，流已建立）——首字前唯一能给出的"活着"信号 */
+  onOpen?: () => void
 }
 
 export function normalizeBaseUrl(url: string): string {
@@ -204,6 +206,7 @@ export function streamChat(
         throw new Error(`HTTP ${resp.status} ${text.slice(0, 300)}`)
       }
       if (!resp.body) throw new Error('响应无 body')
+      handlers.onOpen?.()
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buf = ''

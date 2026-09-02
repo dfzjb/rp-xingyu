@@ -130,21 +130,13 @@ async function clearAll() {
             <template #icon><Sparkles /></template>
             {{ distilling ? '提炼中…' : 'AI 提炼最近剧情' }}
           </n-button>
-          <n-select
-            size="small"
-            :value="settings.settings.memorySummaryStyle || 'balanced'"
-            style="width: 110px"
-            :options="[
-              { label: '精简', value: 'brief' },
-              { label: '均衡', value: 'balanced' },
-              { label: '详细', value: 'detailed' },
-            ]"
-            @update:value="(v: string) => settings.patch({ memorySummaryStyle: v as never })"
-          />
           <div style="flex: 1" />
           <button class="btn sm ghost" title="导出记忆 JSON" @click="exportMemories"><Download :size="14" /></button>
           <button class="btn sm ghost danger" title="清空本会话记忆" @click="clearAll"><Eraser :size="14" /></button>
         </div>
+        <p style="font-size: 0.72rem; color: var(--text-2); margin: 0">
+          提炼详略 / 记忆模式 / 副模型等引擎设置在侧边栏「记忆系统」页统一调整。
+        </p>
 
         <template v-for="([date, list]) in groupedByDate" :key="date">
           <div class="mem-date">{{ date }}（{{ list.length }}）</div>
