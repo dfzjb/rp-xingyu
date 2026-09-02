@@ -101,3 +101,60 @@ describe('applyRegexScripts 应用管线', () => {
     expect(() => applyRegexScripts('abc', bad, PLACEMENT_AI_OUTPUT, 'display')).not.toThrow()
   })
 })
+
+describe('内联修饰符兼容（(?i)(?s)(?m)，对齐旧版）', () => {
+  it('(?i) 内联忽略大小写：JS 原生会 SyntaxError，剥离后正常匹配', () => {
+    const s = [{ pattern: '(?i)dragon', replace: '龙' }]
+    // 不剥离时 new RegExp('(?i)dragon') 直接抛错 → 脚本静默失效
+    expect(applyRegexScripts('a DRAGON b', s, PLACEMENT_AI_OUTPUT, 'display')).toBe('a 龙 b')
+  })
+
+  it('(?s) 内联 dotAll：点可跨行', () => {
+    const s = [{ pattern: '(?s)<note>.*?</note>', replace: '' }]
+    expect(applyRegexScripts('前<note>a\nb</note>后', s, PLACEMENT_AI_OUTPUT, 'display')).toBe('前后')
+  })
+
+  it('组合修饰符 (?im) 同时生效', () => {
+    const s = [{ pattern: '(?im)^abc$', replace: 'X' }]
+    expect(applyRegexScripts('ABC\nabc', s, PLACEMENT_AI_OUTPUT, 'display')).toBe('X\nX')
+  })
+})
+
+describe('minDepth/maxDepth 深度定向', () => {
+  const scripts = [{ pattern: '旧', replace: '新', minDepth: 1, maxDepth: 2 }]
+  it('落在深度区间内才替换', () => {
+    expect(applyRegexScripts('旧', scripts, PLACEMENT_AI_OUTPUT, 'send', { depth: 0 })).toBe('旧')
+    expect(applyRegexScripts('旧', scripts, PLACEMENT_AI_OUTPUT, 'send', { depth: 1 })).toBe('新')
+    expect(applyRegexScripts('旧', scripts, PLACEMENT_AI_OUTPUT, 'send', { depth: 2 })).toBe('新')
+    expect(applyRegexScripts('旧', scripts, PLACEMENT_AI_OUTPUT, 'send', { depth: 3 })).toBe('旧')
+  })
+  it('不传 depth 时不做深度限制（向后兼容）', () => {
+    expect(applyRegexScripts('旧', scripts, PLACEMENT_AI_OUTPUT, 'send')).toBe('新')
+  })
+})
+
+describe('HTML / 代码块保护', () => {
+  it('普通正则不进入代码块与行内代码', () => {
+    const s = [{ pattern: 'foo', replace: 'bar', flags: 'g' }]
+    const input = 'foo 文本 ```code foo 内``` 行内 `foo` 结尾 foo'
+    const out = applyRegexScripts(input, s, PLACEMENT_AI_OUTPUT, 'display')
+    expect(out).toContain('```code foo 内```')
+    expect(out).toContain('`foo`')
+    // 普通文本处仍被替换
+    expect(out.startsWith('bar 文本')).toBe(true)
+    expect(out.endsWith('结尾 bar')).toBe(true)
+  })
+
+  it('普通正则不改 HTML 标签内部', () => {
+    const s = [{ pattern: 'data', replace: 'X', flags: 'g' }]
+    const input = '可见 data <div data-id="1">data 文本</div>'
+    const out = applyRegexScripts(input, s, PLACEMENT_AI_OUTPUT, 'display')
+    expect(out).toContain('data-id') // 属性受保护
+    expect(out).toContain('>X 文本<') // 标签外文本照常替换
+  })
+
+  it('正则自身含 <> 时视为有意操作 HTML，跳过保护', () => {
+    const s = [{ pattern: '<b>foo</b>', replace: '<b>bar</b>' }]
+    expect(applyRegexScripts('<b>foo</b>', s, PLACEMENT_AI_OUTPUT, 'display')).toBe('<b>bar</b>')
+  })
+})

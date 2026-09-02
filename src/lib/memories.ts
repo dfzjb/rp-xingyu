@@ -237,3 +237,124 @@ export async function searchVectorMemories(
   return scored.slice(0, topK).map((x) => x.m)
 }
 
+// ── 向量模式：对话原文分片自动入库（对齐旧版 _doEmbedMemoryForMessages，不依赖聊天副模型）──
+
+/** 入库前清洗：去思维链 / UI 更新块 / 代码块 / 行内代码 / HTML 标签 / 冗余空白 */
+export function cleanTextForVector(raw: string): string {
+  let s = parseCot(raw || '').main
+  s = s.replace(/<ui_template_updates>[\s\S]*?<\/ui_template_updates>/gi, ' ')
+  s = s.replace(/```[\s\S]*?```/g, ' ')
+  s = s.replace(/`[^`\n]*`/g, ' ')
+  s = s.replace(/<\/?[a-zA-Z][^>]*>/g, ' ')
+  s = s.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/\r/g, '')
+  return s.trim()
+}
+
+const CHUNK_TARGET = 350 // 单片目标字符数（短段合并到此附近）
+const CHUNK_MAX = 800 // 单片硬上限（超出按句切）
+
+/** 段落分片：短段合并、长段按句拆（对齐旧版 split/merge 语义） */
+export function chunkText(raw: string): string[] {
+  const paras = raw.split(/\n+/).map((p) => p.trim()).filter((p) => p.length > 1)
+  const out: string[] = []
+  let buf = ''
+  const flush = () => { if (buf.trim()) out.push(buf.trim()); buf = '' }
+  for (const p of paras) {
+    if (p.length > CHUNK_MAX) {
+      flush()
+      const sentences = p.match(/[^。！？!?….]+[。！？!?….]*/g) || [p]
+      let acc = ''
+      for (const s of sentences) {
+        if (acc && (acc.length + s.length) > CHUNK_TARGET) { out.push(acc.trim()); acc = s }
+        else acc += s
+      }
+      if (acc.trim()) out.push(acc.trim())
+      continue
+    }
+    if (buf && buf.length + p.length > CHUNK_TARGET) flush()
+    buf = buf ? buf + '\n' + p : p
+  }
+  flush()
+  return out
+}
+
+/**
+ * 向量模式自动入库：把链路中尚未覆盖的对话原文清洗 → 分片 → embedding → 存为 kind:'chunk' 记忆。
+ * 只需 embedding 接口，不需要聊天副模型。已被任一记忆（sourceTurnIds/sourceAssistantIds）
+ * 覆盖的节点自动跳过，可重复调用（增量）。
+ * @returns 新增条目数
+ */
+export async function autoIngestVectorFloors(
+  cfg: EmbedConfig,
+  chainNodes: MsgNode[],
+  sessionId: string,
+): Promise<number> {
+  const existing = await db.memories.where('sessionId').anyOf([sessionId, 'global']).toArray()
+  const covered = new Set<string>()
+  for (const m of existing) {
+    for (const id of [...(m.sourceTurnIds || []), ...(m.sourceAssistantIds || [])]) {
+      if (id) covered.add(id)
+    }
+  }
+
+  // 连续同角色节点合并为一组（片段绑定其全部来源节点）
+  const groups: { ids: string[]; text: string }[] = []
+  for (const n of chainNodes) {
+    if (n.role !== 'user' && n.role !== 'assistant') continue
+    if (covered.has(n.id)) continue
+    const body = cleanTextForVector(n.content || '')
+    if (body.length < 2) continue
+    const speaker = n.role === 'user' ? (n.name || '用户') : (n.name || '角色')
+    const piece = `${speaker}：${body}`
+    const last = groups[groups.length - 1]
+    if (last && last.ids.length && chainNodes.find((x) => x.id === last.ids[last.ids.length - 1])?.role === n.role) {
+      last.text += '\n' + piece
+      last.ids.push(n.id)
+    } else {
+      groups.push({ ids: [n.id], text: piece })
+    }
+  }
+  if (!groups.length) return 0
+
+  // 每组分片，记录来源
+  const pieces: { text: string; ids: string[] }[] = []
+  for (const g of groups) {
+    for (const c of chunkText(g.text)) {
+      if (c.trim().length >= 2) pieces.push({ text: c, ids: g.ids })
+    }
+  }
+  if (!pieces.length) return 0
+
+  // 分批 embedding + 入库（每批最多 20）
+  let added = 0
+  const now = Date.now()
+  for (let i = 0; i < pieces.length; i += 20) {
+    const batch = pieces.slice(i, i + 20)
+    let vecs: number[][] = []
+    try {
+      vecs = await fetchEmbeddings(cfg, batch.map((p) => p.text))
+    } catch {
+      continue // 整批失败跳过（embedding 接口不可用时不产生空条目）
+    }
+    const rows: MemoryEntry[] = []
+    for (let j = 0; j < batch.length; j++) {
+      if (!vecs[j]?.length) continue
+      rows.push({
+        id: uuid(),
+        sessionId,
+        summary: batch[j].text,
+        sourceTurnIds: [...batch[j].ids],
+        kind: 'chunk',
+        enabled: true,
+        classicMemory: true,
+        source: 'ai',
+        createdAt: now + added,
+        embedding: vecs[j],
+      })
+      added++
+    }
+    if (rows.length) await db.memories.bulkPut(deepPlain(rows))
+  }
+  return added
+}
+

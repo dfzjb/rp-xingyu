@@ -171,6 +171,10 @@ export interface MemoryEntry {
   summary: string // 记忆要点正文
   turn?: number // 关联楼层（从 1 起）
   sourceAssistantIds?: string[] // 绑定的 AI 消息节点 id（注入到其后）
+  /** 向量原文分片：来源的全部节点 id（user+assistant），用于去重跳过已入库楼层 */
+  sourceTurnIds?: string[]
+  /** summary=AI 提炼要点；chunk=向量模式的对话原文分片（自动向量化入库） */
+  kind?: 'summary' | 'chunk'
   enabled: boolean
   classicMemory: true
   source: 'manual' | 'ai'

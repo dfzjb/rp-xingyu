@@ -9,7 +9,7 @@ import type { CharacterCard, MemoryEntry, MsgNode, Persona, PromptPreset } from 
 import { parseCot } from './cot'
 import { applyRegexScripts, PLACEMENT_AI_OUTPUT, PLACEMENT_USER_INPUT } from './regex'
 import { replaceMacros } from './macros'
-import { resolveWorldInfo, type WorldInfoEntry } from './worldinfo'
+import { resolveWorldInfo, DEFAULT_WI_RECURSION_STEPS, type WorldInfoEntry } from './worldinfo'
 import type { UiTemplate } from './uitemplate'
 import { buildUiTemplateContextPrompt, buildUiTemplateUpdateInstruction } from './ui-template-state'
 import { builtinStateSyncRules, stripStateSyncBlocks, type StateSyncRule } from './state-sync'
@@ -35,16 +35,19 @@ export interface PromptOptions {
   uiTemplateStates?: Record<string, Record<string, unknown>>
   /** 变量回写规则（含内置方言）；历史消息按此剥离更新块，缺省按内置规则剥离 */
   stateSyncRules?: StateSyncRule[]
+  /** 世界书递归激活步数（缺省 3，对齐旧版链式激活；0 = 关闭递归） */
+  worldInfoRecursion?: number
 }
 
-/** 节点正文：剥思维链 → 剥变量更新块（规则化）→ 应用正则 → 替换宏 */
-function nodeBody(n: MsgNode, opts: PromptOptions, ctx: { charName: string; userName: string }): string {
+/** 节点正文：剥思维链 → 剥变量更新块（规则化）→ 应用正则 → 替换宏
+ * @param depth 该节点距最新消息的层数（0=最新），供发送层正则执行 min/maxDepth 定向 */
+function nodeBody(n: MsgNode, opts: PromptOptions, ctx: { charName: string; userName: string }, depth?: number): string {
   let main = parseCot(n.content || '').main
   // 缺省用内置规则兜底（含原生 <ui_template_updates>），传入卡级合并规则时按规则剥离
   main = stripStateSyncBlocks(main, opts.stateSyncRules ?? builtinStateSyncRules())
   if (opts.regexEnabled && opts.regexScripts) {
     const placement = n.role === 'user' ? PLACEMENT_USER_INPUT : PLACEMENT_AI_OUTPUT
-    main = applyRegexScripts(main, opts.regexScripts, placement, 'send')
+    main = applyRegexScripts(main, opts.regexScripts, placement, 'send', typeof depth === 'number' ? { depth } : undefined)
   }
   main = replaceMacros(main, ctx)
   return main.trim()
@@ -114,12 +117,14 @@ export function buildPrompt(
   const messages: ApiMessage[] = []
 
   // ── 世界书解析 ──
+  // 扫描源 = 全链路 user+assistant 楼层正文（对齐旧版：AI 回复与用户输入一样参与关键词命中，
+  // scanDepth 按楼层计而非按用户消息计）
   const worldEntries = (character.worldInfo || []) as WorldInfoEntry[]
-  const recentUserTexts = chainNodes
-    .filter((n) => n.role === 'user')
+  const scanTexts = chainNodes
+    .filter((n) => n.role !== 'system')
     .map((n) => nodeBody(n, opts, ctx))
     .filter(Boolean)
-  const wi = resolveWorldInfo(worldEntries, recentUserTexts)
+  const wi = resolveWorldInfo(worldEntries, scanTexts, opts.worldInfoRecursion ?? DEFAULT_WI_RECURSION_STEPS)
 
   const sysBlocks: string[] = []
   for (const c of wi.beforeChar) sysBlocks.push(c)
@@ -200,9 +205,13 @@ export function buildPrompt(
     }
   }
   const out: ApiMessage[] = []
-  for (const n of historyAll) {
-    if (!windowSet.has(n)) continue
-    const body = nodeBody(n, opts, ctx)
+  const winNodes: MsgNode[] = []
+  for (const n of historyAll) if (windowSet.has(n)) winNodes.push(n)
+  for (let idx = 0; idx < winNodes.length; idx++) {
+    const n = winNodes[idx]
+    // depth = 距最新对话楼层的层数（0=最新），只数 user/assistant 楼层（绑定记忆 system 不计）
+    const depth = winNodes.length - 1 - idx
+    const body = nodeBody(n, opts, ctx, depth)
     if (!body) continue
     out.push({ role: n.role === 'user' ? 'user' : 'assistant', content: body })
     const mems = memAfterNode.get(n)
@@ -211,14 +220,23 @@ export function buildPrompt(
     }
   }
 
+  // ── @深度世界书条目：从末尾倒数 depth 个对话楼层后真实插入（对齐旧版 splice 语义）──
+  // depth=0 插在最新楼层之后；只按 user/assistant 楼层倒数；depthRole 决定注入消息角色
+  for (const d of wi.byDepth) {
+    let count = 0
+    let idx = out.length - 1
+    for (; idx >= 0; idx--) {
+      if (out[idx].role === 'user' || out[idx].role === 'assistant') {
+        count++
+        if (count > Math.max(0, d.depth)) break
+      }
+    }
+    out.splice(idx + 1, 0, { role: d.role, content: replaceMacros(d.content, ctx) })
+  }
+
   // ── 历史后指令（ST post_history_instructions）──
   const phi = textBody(character.postHistoryInstructions, ctx)
   if (phi) out.push({ role: 'system', content: phi })
-
-  // ── @深度世界书条目（depth 升序，0 最靠近最新消息）──
-  for (const d of wi.byDepth) {
-    out.push({ role: d.role, content: replaceMacros(d.content, ctx) })
-  }
 
   // ── 预设 user/assistant 条目追加 ──
   const tailEntries = (opts.promptEntries || []).filter(

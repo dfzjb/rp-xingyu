@@ -6,7 +6,7 @@ import { uuid } from '../lib/id'
 import { streamChat, chatOnce, type ApiConfig } from '../lib/api'
 import { buildPrompt } from '../lib/prompt'
 import { deepPlain } from '../lib/plain'
-import { distillMemoriesFromChat, backfillMemories, searchVectorMemories } from '../lib/memories'
+import { distillMemoriesFromChat, backfillMemories, searchVectorMemories, autoIngestVectorFloors } from '../lib/memories'
 import { evaluateNpcsAutonomously } from '../lib/affinity'
 import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
@@ -43,6 +43,8 @@ export const useChatStore = defineStore('chat', () => {
   const pendingInstruction = ref('')
   /** 每会话上次自动提炼时的楼层数 */
   const lastPatrolFloor = new Map<string, number>()
+  /** 每会话上次向量原文分片入库时的楼层数（独立于副模型巡逻，频率更高） */
+  const lastVectorFloor = new Map<string, number>()
 
   let abortFn: (() => void) | null = null
 
@@ -420,18 +422,18 @@ export const useChatStore = defineStore('chat', () => {
             settings.settings.memoryVectorTopK || 8,
           )
         } catch {
-          // 向量检索失败时回退到总结模式（全量注入）
-          memories = await db.memories
+          // 向量检索失败时回退到总结模式（全量注入总结条目；原文分片 chunk 不走全量注入）
+          memories = (await db.memories
             .where('sessionId')
             .anyOf([s.id, 'global'])
-            .toArray()
+            .toArray()).filter((m) => m.kind !== 'chunk')
         }
       } else {
-        // 总结模式：全量注入（由 prompt.ts 按预算分配）
-        memories = await db.memories
+        // 总结模式：全量注入总结条目（由 prompt.ts 按预算分配）；原文分片仅向量模式使用
+        memories = (await db.memories
           .where('sessionId')
           .anyOf([s.id, 'global'])
-          .toArray()
+          .toArray()).filter((m) => m.kind !== 'chunk')
       }
 
       // 好感度状态行（每个已追踪 NPC 一条）
@@ -543,15 +545,50 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 记忆自动巡逻 + 好感度自主评判：
-   * AI 回复结束后，若距上次新增楼数达到阈值，后台用副模型
-   * 提炼最近剧情记忆，并自主评估出场 NPC 的好感度变化（失败静默）。
+   * 记忆自动巡逻（两条独立自动入库通道）：
+   *  A. 向量模式：配好 embedding 模型即把对话原文分片向量化入库（无需聊天副模型），轻量增量、独立节流；
+   *  B. 总结模式：副模型按楼层阈值提炼记忆 + 自主评估出场 NPC 好感度（失败静默）。
    */
   async function maybeAutoPatrol(s: ChatSession) {
     const settings = useSettingsStore()
     if (settings.settings.memoryAutoPatrol === false || settings.settings.memoryEngineOn === false) return
-    // 记忆/评判专用副模型未配置时整段跳过（不默认占用主模型）
-    if (!settings.settings.memoryAuxModel) return
+    const hasAux = !!settings.settings.memoryAuxModel
+    // 向量模式：配好 embedding 模型即可自动入库，不再硬依赖副模型
+    const hasEmbed = settings.settings.memoryMode === 'vector' && !!settings.settings.memoryEmbeddingModel
+    if (!hasAux && !hasEmbed) return
+
+    const buildPath = (): MsgNode[] => {
+      const path: MsgNode[] = []
+      let cur: MsgNode | undefined = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
+      while (cur) {
+        path.unshift(cur)
+        cur = cur.parentId ? s.nodes[cur.parentId] : undefined
+      }
+      return path
+    }
+
+    // ── A. 向量原文分片入库（增量幂等：已覆盖节点自动跳过；每新增 3 楼跑一次）──
+    if (hasEmbed) {
+      const totalFloors = Object.keys(s.nodes).length
+      const lastV = lastVectorFloor.get(s.id) ?? -1
+      if (totalFloors >= 2 && (lastV < 0 || totalFloors - lastV >= 3)) {
+        lastVectorFloor.set(s.id, totalFloors)
+        try {
+          await autoIngestVectorFloors(
+            {
+              baseUrl: settings.settings.apiBaseUrl,
+              apiKey: settings.settings.apiKey,
+              model: settings.settings.memoryEmbeddingModel,
+            },
+            buildPath(),
+            s.id,
+          )
+        } catch { /* embedding 暂不可用时静默，下轮增量再试 */ }
+      }
+    }
+
+    // ── B. 副模型任务：好感度自主评判 + 总结式补录（未配副模型则到此为止）──
+    if (!hasAux) return
     const floors = Math.max(5, settings.settings.memoryPatrolFloors || 20)
     const totalFloors = Object.keys(s.nodes).length
     const last = lastPatrolFloor.get(s.id) ?? -1
@@ -561,19 +598,12 @@ export const useChatStore = defineStore('chat', () => {
     }
     lastPatrolFloor.set(s.id, totalFloors)
     try {
-      // 沿当前链路取最近楼层正文
-      const path: MsgNode[] = []
-      let cur: MsgNode | undefined = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
-      while (cur) {
-        path.unshift(cur)
-        cur = cur.parentId ? s.nodes[cur.parentId] : undefined
-      }
-      const settingsCfg = useSettingsStore()
+      const path = buildPath()
       const cfg = {
-        baseUrl: settingsCfg.settings.apiBaseUrl,
-        apiKey: settingsCfg.settings.apiKey,
-        // 副模型：记忆/评判专用（上方已保证非空，不再回退主模型）
-        model: settingsCfg.settings.memoryAuxModel,
+        baseUrl: settings.settings.apiBaseUrl,
+        apiKey: settings.settings.apiKey,
+        // 副模型：记忆/评判专用（未配置时不会走到这里，不默认占用主模型）
+        model: settings.settings.memoryAuxModel,
         temperature: 0.3,
         maxTokens: 1024,
         reasoningEffort: 'minimal',
@@ -585,8 +615,8 @@ export const useChatStore = defineStore('chat', () => {
       // 记忆补录（保留最近楼层之外）
       await backfillMemories(cfg, path, s.id, {
         keepFloors: settings.settings.memoryKeepFloors || 32,
-        concurrency: Math.max(1, settingsCfg.settings.memoryConcurrency || 10),
-        style: (settingsCfg.settings.memorySummaryStyle || 'balanced') as never,
+        concurrency: Math.max(1, settings.settings.memoryConcurrency || 10),
+        style: (settings.settings.memorySummaryStyle || 'balanced') as never,
       })
     } catch {
       // 静默：巡逻失败不打扰用户

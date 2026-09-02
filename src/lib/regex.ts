@@ -142,13 +142,72 @@ export function toStRegexExport(s: RegexScript): Record<string, unknown> {
   }
 }
 
-/** 编译单个脚本为可执行正则（失败返回 null） */
+/**
+ * 剥离 SillyTavern 正则常见的内联修饰符 (?i)(?m)(?s)（含组合如 (?im) 与关闭形式 (?-i)）。
+ * JavaScript RegExp 不支持这些 PCRE 式内联标记（(?s) 直接 SyntaxError），
+ * 需转为等价 flags：i=忽略大小写、m=多行、s=dotAll（现代浏览器均支持）。
+ */
+export function extractInlineFlags(pattern: string, baseFlags = ''): { pattern: string; flags: string } {
+  const flagSet = new Set(baseFlags.replace(/[^gimsuy]/g, '').split('').filter(Boolean))
+  const cleaned = pattern.replace(/\(\?([-ims]+)\)/g, (_m, inner: string) => {
+    let on = true
+    for (const ch of inner) {
+      if (ch === '-') { on = false; continue }
+      if (on && (ch === 'i' || ch === 'm' || ch === 's')) flagSet.add(ch)
+    }
+    return ''
+  })
+  return { pattern: cleaned, flags: [...flagSet].join('') }
+}
+
+/**
+ * 受保护段（对齐旧版 processRegex 保护逻辑）：整页 HTML、script/style、
+ * cot/think 思维链块、Markdown 代码块、行内代码、HTML 标签——普通正则不进入这些段，
+ * 防止把卡内 HTML UI / 代码示例改坏。捕获组用于 split 后逐段识别。
+ */
+const PROTECTED_SOURCE =
+  '(<!DOCTYPE html>[\\s\\S]*?<\\/html>|<html\\b[^>]*>[\\s\\S]*?<\\/html>|<script\\b[^>]*>[\\s\\S]*?<\\/script>|<style\\b[^>]*>[\\s\\S]*?<\\/style>|<(?:cot|think)>[\\s\\S]*?(?:<\\/(?:cot|think)>|<(?:cot|think)>|$)|```[\\s\\S]*?```|`[^`]+`|<\\/?[a-zA-Z][\\w:-]*[^>]*>)'
+const PROTECTED_SPLIT = new RegExp(PROTECTED_SOURCE, 'gi')
+const PROTECTED_TEST = new RegExp('^(?:' + PROTECTED_SOURCE + ')$', 'i')
+
+/** 判断片段本身是否为受保护段 */
+function isProtectedPart(part: string): boolean {
+  PROTECTED_TEST.lastIndex = 0
+  return PROTECTED_TEST.test(part)
+}
+
+/**
+ * 带保护的替换：只对普通文本段执行 re，受保护段原样保留。
+ * 若正则自身就在匹配 HTML/代码块（pattern 含 <> 或 ```），视为用户有意操作，跳过保护。
+ */
+export function protectedReplace(text: string, re: RegExp, replacement: string, scriptName?: string): string {
+  if (/[<>]/.test(re.source) || re.source.includes('```') || scriptName === 'Auto Replace {{user}}') {
+    return text.replace(re, replacement)
+  }
+  PROTECTED_SPLIT.lastIndex = 0
+  return text
+    .split(PROTECTED_SPLIT)
+    .map((part) => (!part || isProtectedPart(part) ? part : part.replace(re, replacement)))
+    .join('')
+}
+
+/** 编译单个脚本为可执行正则（失败返回 null）；自动剥离内联修饰符 */
 function compile(s: RegexScript): RegExp | null {
   if (!s.pattern) return null
-  let flags = s.flags || 'g'
+  // 斜杠写法 /pattern/flags 优先解析
+  let pattern = s.pattern
+  let flags = s.flags || ''
+  const slash = pattern.match(/^\/(.+)\/([a-z]*)$/s)
+  if (slash) {
+    pattern = slash[1]
+    flags = slash[2] || flags
+  }
+  const extracted = extractInlineFlags(pattern, flags)
+  pattern = extracted.pattern
+  flags = extracted.flags
   if (!flags.includes('g')) flags += 'g'
   try {
-    return new RegExp(s.pattern, flags)
+    return new RegExp(pattern, flags)
   } catch {
     return null
   }
@@ -157,15 +216,18 @@ function compile(s: RegexScript): RegExp | null {
 /**
  * 对文本应用一批正则脚本。
  * @param layer 显示层(display)或发送层(send)；与脚本的 applyOn 开关和 affects 影响面共同决定是否生效
+ * @param options.depth 该文本距最新消息的层数（0=最新），用于执行脚本的 minDepth/maxDepth 深度定向（对齐旧版）
  */
 export function applyRegexScripts(
   text: string,
   scripts: unknown,
   placement: number,
   layer: RegexLayer,
+  options?: { depth?: number },
 ): string {
   let out = text || ''
   if (!Array.isArray(scripts) || !out) return out
+  const depth = options?.depth
   for (const raw of scripts) {
     const s = normalizeRegexScript(raw)
     if (!s || s.disabled) continue
@@ -173,10 +235,15 @@ export function applyRegexScripts(
     if (layer === 'send' && s.applyOnSend === false) continue
     if (placement === PLACEMENT_USER_INPUT && s.affectsUser === false) continue
     if (placement === PLACEMENT_AI_OUTPUT && s.affectsAI === false) continue
+    // 深度定向：只作用于 [minDepth, maxDepth] 楼层区间（depth 缺省时不限制，保持向后兼容）
+    if (typeof depth === 'number') {
+      if (typeof s.minDepth === 'number' && depth < s.minDepth) continue
+      if (typeof s.maxDepth === 'number' && depth > s.maxDepth) continue
+    }
     const re = compile(s)
     if (!re) continue
     try {
-      out = out.replace(re, s.replace)
+      out = protectedReplace(out, re, s.replace, s.name)
     } catch {
       // 替换串中的非法 $ 序列等异常：跳过该脚本
     }

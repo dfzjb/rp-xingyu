@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { resolveWorldInfo, type WorldInfoEntry } from '../src/lib/worldinfo'
+import {
+  resolveWorldInfo,
+  normalizeWorldInfoEntry,
+  normalizeWorldInfoList,
+  type WorldInfoEntry,
+} from '../src/lib/worldinfo'
 
 const msgs = (...t: string[]) => t
 
@@ -130,5 +135,71 @@ describe('递归激活', () => {
       '这个国家禁用火焰法术。',
       '火焰法术设定',
     ])
+  })
+
+  it('默认递归步数非零（链式条目默认可激活）', () => {
+    const a = { keys: ['起点'], content: '提到钥匙' }
+    const b = { keys: ['钥匙'], content: '提到门' }
+    const c = { keys: ['门'], content: '门后秘密' }
+    const r = resolveWorldInfo([a, b, c], msgs('这是起点'))
+    expect(r.afterChar).toContain('门后秘密')
+  })
+})
+
+describe('normalizeWorldInfoEntry 字段防腐层', () => {
+  it('字符串位置别名：at_depth/before_character 归一', () => {
+    const depth = normalizeWorldInfoEntry({ keys: ['x'], content: 'D', position: 'at_depth', depth: 2 })!
+    expect(depth.position).toBe('at_depth')
+    expect(depth.depth).toBe(2)
+    const before = normalizeWorldInfoEntry({ keys: ['x'], content: 'B', position: 'before_character' })!
+    expect(before.position).toBe('before_char')
+  })
+
+  it('ST 数字位置编码：0 before / 1 after / 2,3,4 at_depth', () => {
+    expect(normalizeWorldInfoEntry({ position: 0, content: 'a', keys: ['x'] })!.position).toBe('before_char')
+    expect(normalizeWorldInfoEntry({ position: 1, content: 'a', keys: ['x'] })!.position).toBe('after_char')
+    for (const n of [2, 3, 4]) {
+      expect(normalizeWorldInfoEntry({ position: n, content: 'a', keys: ['x'] })!.position).toBe('at_depth')
+    }
+  })
+
+  it('旧版数字编码 legacy：2/3 global_note → before_char，4 at_depth', () => {
+    expect(normalizeWorldInfoEntry({ position: 2, content: 'a', keys: ['x'] }, 'legacy')!.position).toBe('before_char')
+    expect(normalizeWorldInfoEntry({ position: 4, content: 'a', keys: ['x'] }, 'legacy')!.position).toBe('at_depth')
+  })
+
+  it('ST v3：字段嵌在 extensions 内也能提升（depth/secondary_keys/depth_role）', () => {
+    const e = normalizeWorldInfoEntry({
+      keys: ['主'],
+      content: 'C',
+      position: 4,
+      extensions: { depth: 6, secondary_keys: ['次1', '次2'], depth_role: 1, selectiveLogic: 1 },
+    })!
+    expect(e.depth).toBe(6)
+    expect(e.secondaryKeys).toEqual(['次1', '次2'])
+    expect(e.depthRole).toBe('user')
+    expect(e.selectiveLogic).toBe('AND_ALL')
+  })
+
+  it('逗号字符串 keys 拆分为数组；disabled 反向', () => {
+    const e = normalizeWorldInfoEntry({ keys: 'a, b，c', content: 'X', disabled: true })!
+    expect(e.keys).toEqual(['a', 'b', 'c'])
+    expect(e.enabled).toBe(false)
+  })
+
+  it('normalizeWorldInfoList 支持 ST character_book.entries 结构', () => {
+    const list = normalizeWorldInfoList({ entries: [{ keys: ['a'], content: '1', position: 4 }] })
+    expect(list).toHaveLength(1)
+    expect(list[0].position).toBe('at_depth')
+  })
+
+  it('归一后 @深度条目在引擎中正确进入 byDepth（回归 W4）', () => {
+    const entries = normalizeWorldInfoList([
+      { keys: ['线索'], content: '深度设定', position: 'at_depth', depth: 2, depthRole: 'user' },
+    ]) as WorldInfoEntry[]
+    const r = resolveWorldInfo(entries, msgs('发现线索'))
+    expect(r.byDepth).toHaveLength(1)
+    expect(r.byDepth[0].content).toBe('深度设定')
+    expect(r.byDepth[0].role).toBe('user')
   })
 })

@@ -8,7 +8,7 @@ import { NButton, NSwitch, NSelect } from 'naive-ui'
 import { useChatStore } from '../stores/chat'
 import { useCharactersStore } from '../stores/characters'
 import { useSettingsStore } from '../stores/settings'
-import { listMemories, addMemory, updateMemory, removeMemory, backfillMemories } from '../lib/memories'
+import { listMemories, addMemory, updateMemory, removeMemory, backfillMemories, autoIngestVectorFloors } from '../lib/memories'
 import { groupedModelOptions } from '../lib/api'
 import { toast } from '../lib/toast'
 import type { MemoryEntry } from '../types'
@@ -107,16 +107,36 @@ async function startBackfill() {
   if (backfilling.value) return
   const s = chat.sessions.find((x) => x.id === (activeScope.value === 'global' ? chat.currentSessionId : activeScope.value))
   if (!s || !s.activeNodeId) { toast.warning('请先选择一个会话'); return }
-  // 副模型未配置时不回退主模型
-  if (!settings.settings.memoryAuxModel) { toast.warning('请先配置「总结模式副模型」（未配置时不再默认使用主模型）'); return }
-  const cfg = auxCfg()
-  if (!cfg) { toast.warning('请先在设置中配置 API Key'); return }
   // 沿链路取全部节点
   const path: import('../types').MsgNode[] = []
   let cur: import('../types').MsgNode | undefined = s.nodes[s.activeNodeId]
   while (cur) { path.unshift(cur); cur = cur.parentId ? s.nodes[cur.parentId] : undefined }
   backfilling.value = true
   try {
+    // 向量模式：原文分片 → embedding 入库（只需 embedding 模型，不需要总结副模型）
+    if (settings.settings.memoryMode === 'vector') {
+      if (!settings.settings.memoryEmbeddingModel) {
+        toast.warning('请先在高级设置中配置 Embedding 模型（向量模式无需总结副模型）')
+        return
+      }
+      if (!settings.settings.apiKey) { toast.warning('请先在设置中配置 API Key'); return }
+      const n = await autoIngestVectorFloors(
+        {
+          baseUrl: settings.settings.apiBaseUrl,
+          apiKey: settings.settings.apiKey,
+          model: settings.settings.memoryEmbeddingModel,
+        },
+        path,
+        s.id,
+      )
+      toast.success(n ? `向量入库完成：新增 ${n} 个原文分片` : '没有需要入库的新楼层（已全部覆盖）')
+      await reload()
+      return
+    }
+    // 总结模式：副模型提炼补录（未配置时不回退主模型）
+    if (!settings.settings.memoryAuxModel) { toast.warning('请先配置「总结模式副模型」（未配置时不再默认使用主模型）'); return }
+    const cfg = auxCfg()
+    if (!cfg) { toast.warning('请先在设置中配置 API Key'); return }
     const n = await backfillMemories(cfg, path, s.id, {
       keepFloors: settings.settings.memoryKeepFloors || 32,
       concurrency: Math.max(1, settings.settings.memoryConcurrency || 10),
@@ -201,7 +221,8 @@ const embeddingModelOptions = computed(() => {
           <details class="mem-adv" :open="settings.settings.memoryMode === 'vector'">
             <summary>
               高级设置：记忆模式 / 副模型 / 向量检索
-              <span v-if="!settings.settings.memoryAuxModel" class="mem-adv-warn">（副模型未配置：不会自动提炼 / 评判 / 补录）</span>
+              <span v-if="settings.settings.memoryMode === 'vector' && !settings.settings.memoryEmbeddingModel" class="mem-adv-warn">（向量模式：请配置 Embedding 模型即可自动入库，无需总结副模型）</span>
+              <span v-else-if="settings.settings.memoryMode !== 'vector' && !settings.settings.memoryAuxModel" class="mem-adv-warn">（总结模式：副模型未配置，不会自动提炼 / 评判 / 补录）</span>
             </summary>
             <div style="display: flex; gap: 12px; flex-wrap: wrap; margin: 10px 0 0">
               <div class="field" style="width: 220px; margin-bottom: 0">
@@ -264,7 +285,7 @@ const embeddingModelOptions = computed(() => {
 
           <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-top: 12px">
             <button class="btn sm primary" style="flex-shrink: 0" :disabled="backfilling || !!backfillProgress && backfillProgress.done < (backfillProgress.total || 1)" @click="startBackfill">
-              {{ backfilling ? '补录中…' : '补录记忆' }}
+              {{ backfilling ? '处理中…' : (settings.settings.memoryMode === 'vector' ? '向量入库（原文分片）' : '补录记忆') }}
             </button>
           </div>
           <div v-if="backfillProgress" style="margin-top: 10px; font-size: 0.76rem; color: var(--text-1)">
@@ -304,7 +325,7 @@ const embeddingModelOptions = computed(() => {
               @change="updateMemory({ ...m, summary: ($event.target as HTMLTextAreaElement).value })"
             />
             <div class="mem-foot">
-              <span class="chip" :class="{ on: m.source === 'ai' }">{{ m.source === 'ai' ? 'AI 提炼' : '手动' }}</span>
+              <span class="chip" :class="{ on: m.source === 'ai' }">{{ m.kind === 'chunk' ? '原文分片' : (m.source === 'ai' ? 'AI 提炼' : '手动') }}</span>
               <span v-if="m.sessionId === 'global'" class="chip violet">全局</span>
               <div style="flex: 1" />
               <NSwitch size="small" :value="m.enabled" @update:value="(v: boolean) => toggleEnabled(m, v)" />

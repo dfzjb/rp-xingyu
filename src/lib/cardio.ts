@@ -6,6 +6,7 @@
 import type { CharacterCard, LegacyCharacter } from '../types'
 import { uuid } from './id'
 import { normalizeUiTemplates } from './uitemplate'
+import { normalizeWorldInfoList } from './worldinfo'
 
 // ── PNG tEXt chunk 读写 ──
 
@@ -148,8 +149,6 @@ const CHUNK_SIZE = 0x8000
 
 // ── ST 卡对象 ↔ 新站卡互转 ──
 
-interface StWorldEntry { keys?: string[]; content?: string; comment?: string; [k: string]: unknown }
-
 /** ST 卡（V1/V2/V3 或 旧版 老格式）→ 新站卡 */
 export function stCardToOurs(obj: unknown, avatarDataUri: string): CharacterCard {
   if (!obj || typeof obj !== 'object') throw new Error('卡数据无效')
@@ -157,18 +156,11 @@ export function stCardToOurs(obj: unknown, avatarDataUri: string): CharacterCard
   const data = o.data && typeof o.data === 'object' ? o.data : o // V2/V3 包一层 data
   const ext = data.extensions || {}
   const book = data.character_book
+  // 统一过世界书归一化层：拍平 extensions、识别字符串/数字位置编码、snake/camel 别名，
+  // 避免 ST 卡的 at_depth/secondary_keys/extensions.depth 等字段静默失配
   const worldInfo = Array.isArray(book?.entries)
-    ? book.entries.map((e: StWorldEntry) => ({
-        comment: e.comment || e.name || '',
-        content: e.content || '',
-        enabled: e.enabled !== false,
-        keys: e.keys || (e.key ? [e.key] : []),
-        constant: !!e.constant,
-        position: e.position ?? 'before_char',
-        order: e.order ?? 100,
-        ...e,
-      }))
-    : Array.isArray(data.worldInfo) ? data.worldInfo : []
+    ? normalizeWorldInfoList(book.entries, 'st')
+    : Array.isArray(data.worldInfo) ? normalizeWorldInfoList(data.worldInfo, 'legacy') : []
   const card: CharacterCard = {
     uuid: uuid(),
     name: data.name || o.name || '未命名角色',

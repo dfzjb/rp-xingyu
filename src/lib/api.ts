@@ -166,9 +166,53 @@ export function buildRequestMessages(ctx: ChatRequestContext): {
   return msgs
 }
 
+/** 从一个 SSE data 负载（已解析的 JSON 对象）提取正文/推理增量与流内错误 */
+function extractChunk(j: any): { content?: string; reasoning?: string; error?: string } {
+  // HTTP 200 但流体内含错误对象（中转站常见）：显式提取，避免静默空回复
+  const err = j?.error
+  if (err) {
+    return { error: typeof err === 'string' ? err : (err.message || JSON.stringify(err)) }
+  }
+  const choice = j?.choices?.[0]
+  // delta（流式）与 message（非流式/部分网关）双形态兼容
+  const piece = choice?.delta || choice?.message
+  if (!piece) return {}
+  return {
+    content: typeof piece.content === 'string' ? piece.content : undefined,
+    reasoning: piece.reasoning_content || piece.reasoning || undefined,
+  }
+}
+
+/** 把整段文本按 SSE 行手工解析（中转站 stream:false 却返回 SSE 文本时的兜底通道） */
+function parseSseText(
+  raw: string,
+  onDelta: (t: string) => void,
+  onReasoning: (t: string) => void,
+): { full: string; reasoning: string } {
+  let full = ''
+  let reasoning = ''
+  for (const line of raw.split('\n')) {
+    const t = line.trim()
+    if (!t.startsWith('data:')) continue
+    const payload = t.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    let j: any
+    try { j = JSON.parse(payload) } catch { continue } // 非 JSON 行忽略
+    const c = extractChunk(j)
+    if (c.error) throw new Error(c.error)
+    if (c.reasoning) { reasoning += c.reasoning; onReasoning(c.reasoning) }
+    if (c.content) { full += c.content; onDelta(c.content) }
+  }
+  return { full, reasoning }
+}
+
 /**
  * SSE 流式对话。返回 abort 函数。
  * onDone 收到完整文本（含 <think> 标签原样，由渲染层解析）。
+ * 三通道兼容（对齐旧版）：
+ *  1) text/event-stream：逐块 SSE；
+ *  2) 普通 JSON 响应（非流式/被网关改写）：一次性解析 choices[0].message；
+ *  3) 响应体是 SSE 文本但 Content-Type 不是 event-stream：手工按行解析兜底。
  */
 export function streamChat(
   cfg: ApiConfig,
@@ -205,8 +249,46 @@ export function streamChat(
         const text = await resp.text().catch(() => '')
         throw new Error(`HTTP ${resp.status} ${text.slice(0, 300)}`)
       }
-      if (!resp.body) throw new Error('响应无 body')
       handlers.onOpen?.()
+      const contentType = (resp.headers.get('content-type') || '').toLowerCase()
+
+      // ── 通道 2/3：非 event-stream 响应（普通 JSON 或被网关转成文本的 SSE）──
+      if (!contentType.includes('text/event-stream') && resp.body) {
+        // 小响应一次性读入；仍需支持被中断时保留已得内容
+        const raw = await resp.text()
+        const trimmed = raw.trim()
+        // 通道 2：标准非流式 JSON
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          try {
+            const j = JSON.parse(trimmed)
+            const c = extractChunk(j)
+            if (c.error) throw new Error(c.error)
+            if (c.reasoning) { reasoning += c.reasoning; handlers.onReasoning?.(c.reasoning) }
+            if (c.content) { full += c.content; handlers.onDelta(c.content) }
+            handlers.onDone(full, reasoning)
+            return
+          } catch (e) {
+            if (e instanceof SyntaxError) { /* 落到 SSE 文本/纯文本兜底 */ }
+            else throw e
+          }
+        }
+        // 通道 3：整段 SSE 文本
+        if (trimmed.includes('data:')) {
+          const r = parseSseText(raw, (t) => handlers.onDelta(t), (t) => handlers.onReasoning?.(t))
+          handlers.onDone(r.full, r.reasoning)
+          return
+        }
+        // 纯文本响应：整体作为正文
+        if (trimmed) {
+          full = raw
+          handlers.onDelta(raw)
+        }
+        handlers.onDone(full, reasoning)
+        return
+      }
+
+      // ── 通道 1：标准 SSE 逐块流 ──
+      if (!resp.body) throw new Error('响应无 body')
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buf = ''
@@ -225,21 +307,20 @@ export function streamChat(
             return
           }
           try {
-            const j = JSON.parse(payload)
-            const delta = j.choices?.[0]?.delta
-            if (delta?.reasoning_content) {
-              reasoning += delta.reasoning_content
-              handlers.onReasoning?.(delta.reasoning_content)
-            } else if (delta?.reasoning) {
-              reasoning += delta.reasoning
-              handlers.onReasoning?.(delta.reasoning)
+            const c = extractChunk(JSON.parse(payload))
+            if (c.error) throw new Error(c.error)
+            if (c.reasoning) {
+              reasoning += c.reasoning
+              handlers.onReasoning?.(c.reasoning)
             }
-            if (delta?.content) {
-              full += delta.content
-              handlers.onDelta(delta.content)
+            if (c.content) {
+              full += c.content
+              handlers.onDelta(c.content)
             }
-          } catch {
-            // 忽略无法解析的行（如 keep-alive 注释）
+          } catch (e) {
+            // 流内错误：抛出中止（无法解析的 keep-alive 注释等仍忽略）
+            if (e instanceof SyntaxError) continue
+            throw e
           }
         }
       }
