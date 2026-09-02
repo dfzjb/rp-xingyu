@@ -13,6 +13,13 @@ tools/test_fixture/
 .test/roundtrip.mjs
 .test/card-templates.json
 
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 临时脚本
+test.py
+
 # 日志与系统文件
 *.log
 .DS_Store
