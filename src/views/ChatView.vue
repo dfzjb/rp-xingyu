@@ -132,6 +132,12 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+/** 输入栏「补全」：UI 面板变量兜底补全的输出上限（token），非法/过小回退默认 2000 */
+function setAuxTokens(e: Event) {
+  const v = Number((e.target as HTMLInputElement).value)
+  void settings.patch({ uiAuxMaxTokens: v >= 256 ? Math.floor(v) : 2000 })
+}
+
 /**
  * 接收沙箱 iframe（HTML 消息 / UI 模板）内 triggerSlash 发出的消息：
  * 卡片内"确认创建"等按钮通过 postMessage 把文本送回宿主，直接作为用户消息发送。
@@ -402,6 +408,21 @@ function onModelChange(v: string) {
             @keydown="onKeydown"
             @input="autosize"
           />
+          <label
+            class="composer-aux"
+            title="UI 面板变量补全的输出上限（token）。思考模型补全时的思考 token 也占此预算；面板不随剧情更新、或补全 JSON 被截断时调大，默认 2000。"
+          >
+            <span class="composer-aux-label">补全</span>
+            <input
+              type="number"
+              min="256"
+              max="128000"
+              step="256"
+              inputmode="numeric"
+              :value="settings.settings.uiAuxMaxTokens"
+              @change="setAuxTokens"
+            />
+          </label>
           <button
             v-if="chat.generating"
             class="composer-send stop"

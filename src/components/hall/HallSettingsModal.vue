@@ -149,10 +149,12 @@ async function save() {
               v-model:value="draft.reasoningEffort"
               size="small" style="flex: 1"
               :options="[
-                { label: 'minimal（最快）', value: 'minimal' },
+                { label: 'minimal（最快，部分渠道自动按 low）', value: 'minimal' },
                 { label: 'low', value: 'low' },
                 { label: 'medium', value: 'medium' },
                 { label: 'high', value: 'high' },
+                { label: 'xhigh', value: 'xhigh' },
+                { label: 'max（最深思考）', value: 'max' },
               ]"
             />
           </div>

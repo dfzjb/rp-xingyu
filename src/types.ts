@@ -191,7 +191,7 @@ export interface HallModelConfig {
   model: string
   temperature: number
   maxTokens: number
-  reasoningEffort: string // minimal | low | medium | high
+  reasoningEffort: string // minimal | low | medium | high | xhigh | max（minimal 出口自动兼容为 low）
 }
 
 export interface Settings {
@@ -213,7 +213,7 @@ export interface Settings {
   activeSlot: number
   temperature: number
   maxTokens: number
-  reasoningEffort: string // minimal | low | medium | high
+  reasoningEffort: string // minimal | low | medium | high | xhigh | max（minimal 出口自动兼容为 low）
   contextMessages: number // 滑窗：随请求发送的最近消息条数
   themeMode: 'dark' | 'light'
   /** 聊天区角色卡封面背景：浓度 0-100（0=关闭）与模糊半径 px */
@@ -246,6 +246,8 @@ export interface Settings {
   uiTemplateAuxAnalysis: boolean
   /** 副模型（空 = 复用记忆副模型 memoryAuxModel；两者都未配置则不兜底，不默认占用主模型） */
   uiTemplateAuxModel: string
+  /** UI 面板变量兜底补全的输出上限 token（思考模型的思考 token 也占此预算，默认 2000） */
+  uiAuxMaxTokens: number
   /** 提示词预设条目（旧版 presets 模型）：有序、可启停、带角色 */
   promptEntries: PromptPreset[]
   lastActiveCharUuid?: string
