@@ -22,7 +22,8 @@ export interface ChatRequestContext {
 export interface StreamHandlers {
   onDelta: (text: string) => void
   onReasoning?: (text: string) => void
-  onDone: (full: string, reasoning: string) => void
+  /** finishReason：结束原因（length=达到 max_tokens 被截断，思考模型的思考 token 也占输出预算） */
+  onDone: (full: string, reasoning: string, finishReason?: string) => void
   onError: (err: Error) => void
   /** 请求已被服务端接受（HTTP 200，流已建立）——首字前唯一能给出的"活着"信号 */
   onOpen?: () => void
@@ -166,20 +167,22 @@ export function buildRequestMessages(ctx: ChatRequestContext): {
   return msgs
 }
 
-/** 从一个 SSE data 负载（已解析的 JSON 对象）提取正文/推理增量与流内错误 */
-function extractChunk(j: any): { content?: string; reasoning?: string; error?: string } {
+/** 从一个 SSE data 负载（已解析的 JSON 对象）提取正文/推理增量、结束原因与流内错误 */
+function extractChunk(j: any): { content?: string; reasoning?: string; error?: string; finishReason?: string } {
   // HTTP 200 但流体内含错误对象（中转站常见）：显式提取，避免静默空回复
   const err = j?.error
   if (err) {
     return { error: typeof err === 'string' ? err : (err.message || JSON.stringify(err)) }
   }
   const choice = j?.choices?.[0]
+  const finishReason = typeof choice?.finish_reason === 'string' ? choice.finish_reason : undefined
   // delta（流式）与 message（非流式/部分网关）双形态兼容
   const piece = choice?.delta || choice?.message
-  if (!piece) return {}
+  if (!piece) return finishReason ? { finishReason } : {}
   return {
     content: typeof piece.content === 'string' ? piece.content : undefined,
     reasoning: piece.reasoning_content || piece.reasoning || undefined,
+    finishReason,
   }
 }
 
@@ -188,9 +191,10 @@ function parseSseText(
   raw: string,
   onDelta: (t: string) => void,
   onReasoning: (t: string) => void,
-): { full: string; reasoning: string } {
+): { full: string; reasoning: string; finishReason?: string } {
   let full = ''
   let reasoning = ''
+  let finishReason: string | undefined
   for (const line of raw.split('\n')) {
     const t = line.trim()
     if (!t.startsWith('data:')) continue
@@ -200,10 +204,11 @@ function parseSseText(
     try { j = JSON.parse(payload) } catch { continue } // 非 JSON 行忽略
     const c = extractChunk(j)
     if (c.error) throw new Error(c.error)
+    if (c.finishReason) finishReason = c.finishReason
     if (c.reasoning) { reasoning += c.reasoning; onReasoning(c.reasoning) }
     if (c.content) { full += c.content; onDelta(c.content) }
   }
-  return { full, reasoning }
+  return { full, reasoning, finishReason }
 }
 
 /**
@@ -234,6 +239,7 @@ export function streamChat(
 
   let full = ''
   let reasoning = ''
+  let finishReason: string | undefined
 
   fetch(url, {
     method: 'POST',
@@ -263,9 +269,10 @@ export function streamChat(
             const j = JSON.parse(trimmed)
             const c = extractChunk(j)
             if (c.error) throw new Error(c.error)
+            if (c.finishReason) finishReason = c.finishReason
             if (c.reasoning) { reasoning += c.reasoning; handlers.onReasoning?.(c.reasoning) }
             if (c.content) { full += c.content; handlers.onDelta(c.content) }
-            handlers.onDone(full, reasoning)
+            handlers.onDone(full, reasoning, finishReason)
             return
           } catch (e) {
             if (e instanceof SyntaxError) { /* 落到 SSE 文本/纯文本兜底 */ }
@@ -275,7 +282,7 @@ export function streamChat(
         // 通道 3：整段 SSE 文本
         if (trimmed.includes('data:')) {
           const r = parseSseText(raw, (t) => handlers.onDelta(t), (t) => handlers.onReasoning?.(t))
-          handlers.onDone(r.full, r.reasoning)
+          handlers.onDone(r.full, r.reasoning, r.finishReason)
           return
         }
         // 纯文本响应：整体作为正文
@@ -283,7 +290,7 @@ export function streamChat(
           full = raw
           handlers.onDelta(raw)
         }
-        handlers.onDone(full, reasoning)
+        handlers.onDone(full, reasoning, finishReason)
         return
       }
 
@@ -303,12 +310,13 @@ export function streamChat(
           if (!t.startsWith('data:')) continue
           const payload = t.slice(5).trim()
           if (payload === '[DONE]') {
-            handlers.onDone(full, reasoning)
+            handlers.onDone(full, reasoning, finishReason)
             return
           }
           try {
             const c = extractChunk(JSON.parse(payload))
             if (c.error) throw new Error(c.error)
+            if (c.finishReason) finishReason = c.finishReason
             if (c.reasoning) {
               reasoning += c.reasoning
               handlers.onReasoning?.(c.reasoning)
@@ -325,11 +333,11 @@ export function streamChat(
         }
       }
       // 流正常结束但没收到 [DONE]
-      handlers.onDone(full, reasoning)
+      handlers.onDone(full, reasoning, finishReason)
     })
     .catch((err) => {
       if ((err as Error).name === 'AbortError') {
-        handlers.onDone(full, reasoning) // 中断时保留已生成内容
+        handlers.onDone(full, reasoning, finishReason) // 中断时保留已生成内容
         return
       }
       handlers.onError(err instanceof Error ? err : new Error(String(err)))

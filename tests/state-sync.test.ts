@@ -5,6 +5,7 @@ import {
   normalizeStateSyncRule,
   normalizeStateSyncRules,
   stripStateSyncBlocks,
+  hasUnclosedSyncBlock,
   type StateSyncRule,
 } from '../src/lib/state-sync'
 import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseUpdatesPayload } from '../src/lib/ui-template-state'
@@ -102,6 +103,32 @@ describe('stripStateSyncBlocks', () => {
   it('自定义规则同样剥离；大小写按 flags 处理', () => {
     const rules = [builtinStateSyncRules()[1]]
     expect(stripStateSyncBlocks('A<updatevariable>{"hp":1}</updatevariable>B', rules)).toBe('AB')
+  })
+})
+
+describe('残缺更新块（输出被 max_tokens 截断）', () => {
+  it('只有开标签、没有闭合标签时，开标签到文末全部剥掉', () => {
+    const text = '正文写到一半，困意涌上来。\n<ui_template_updates>\n{"updates":[{"id":"t1","variables":{"time":"22:3'
+    const out = stripStateSyncBlocks(text, builtins)
+    expect(out).not.toContain('ui_template_updates')
+    expect(out).not.toContain('updates')
+    expect(out.trim()).toBe('正文写到一半，困意涌上来。')
+  })
+
+  it('UpdateVariable 残缺开块同样剥离', () => {
+    const text = '正文<UpdateVariable>{"hp":'
+    expect(stripStateSyncBlocks(text, builtins)).toBe('正文')
+  })
+
+  it('完整闭合块不受 openPattern 影响', () => {
+    const text = '正文<ui_template_updates>{"updates":[]}</ui_template_updates>结尾'
+    expect(stripStateSyncBlocks(text, builtins)).toBe('正文结尾')
+  })
+
+  it('hasUnclosedSyncBlock：残缺块返回 true，完整块/无块返回 false', () => {
+    expect(hasUnclosedSyncBlock('正文<ui_template_updates>{"updates":[', builtins)).toBe(true)
+    expect(hasUnclosedSyncBlock('正文<ui_template_updates>{"updates":[]}</ui_template_updates>', builtins)).toBe(false)
+    expect(hasUnclosedSyncBlock('纯正文', builtins)).toBe(false)
   })
 })
 

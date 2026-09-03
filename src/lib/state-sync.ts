@@ -26,6 +26,8 @@ export interface StateSyncRule {
   dialect: StateSyncDialect
   /** json_block / macro_setvar 的固定目标模板（id 或名称）；缺省走载荷内 id/name 或唯一模板 */
   template?: string
+  /** 残缺开块剥离正则源码（输出被 max_tokens 截断时，开标签后没有闭合标签，pattern 匹配不到，需要单独剥到文末） */
+  openPattern?: string
   disabled?: boolean
 }
 
@@ -36,6 +38,7 @@ export function builtinStateSyncRules(): StateSyncRule[] {
       id: 'builtin-legacy-updates',
       name: '旧版 更新块 <ui_template_updates>',
       pattern: '<ui_template_updates\\b[^>]*>([\\s\\S]*?)</ui_template_updates>',
+      openPattern: '<ui_template_updates\\b[^>]*>[\\s\\S]*$',
       flags: 'gi',
       dialect: 'legacy_json',
     },
@@ -43,6 +46,7 @@ export function builtinStateSyncRules(): StateSyncRule[] {
       id: 'builtin-update-variable',
       name: '酒馆变量块 <UpdateVariable>',
       pattern: '<UpdateVariable\\b[^>]*>([\\s\\S]*?)</UpdateVariable>',
+      openPattern: '<UpdateVariable\\b[^>]*>[\\s\\S]*$',
       flags: 'gi',
       dialect: 'json_block',
     },
@@ -79,6 +83,7 @@ export function normalizeStateSyncRule(raw: unknown): StateSyncRule | null {
     flags: typeof o.flags === 'string' && o.flags ? o.flags : 'g',
     dialect,
     template: typeof o.template === 'string' && o.template ? o.template : undefined,
+    openPattern: typeof o.openPattern === 'string' && o.openPattern ? o.openPattern : undefined,
     disabled: o.disabled === true || o.enabled === false,
   }
 }
@@ -198,7 +203,8 @@ function resolveTemplateTarget(template: string): Partial<UiTemplateUpdate> {
   return /^[\w-]{8,}$/.test(template) ? { id: template } : { name: template }
 }
 
-/** 按规则剥离 AI 回复中的更新块（显示层与发送给模型的历史共用）；规则编译失败静默跳过 */
+/** 按规则剥离 AI 回复中的更新块（显示层与发送给模型的历史共用）；规则编译失败静默跳过。
+ *  同时剥离「只写了开标签就被 max_tokens 截断」的残缺块，避免裸机器指令残留在正文末尾。 */
 export function stripStateSyncBlocks(text: string, rules: StateSyncRule[]): string {
   let out = String(text || '')
   for (const rule of rules) {
@@ -207,6 +213,34 @@ export function stripStateSyncBlocks(text: string, rules: StateSyncRule[]): stri
     if (!re) continue
     re.lastIndex = 0
     out = out.replace(re, '')
+    // 残缺开块（无闭合标签）：openPattern 剥到文末
+    if (rule.openPattern) {
+      try {
+        const openRe = new RegExp(rule.openPattern, rule.flags?.includes('i') ? 'i' : '')
+        out = out.replace(openRe, '')
+      } catch { /* 编译失败忽略 */ }
+    }
   }
   return out
+}
+
+/** 正文里是否存在「开标签已出现但闭合标签缺失」的残缺更新块（典型：输出被 max_tokens 截断） */
+export function hasUnclosedSyncBlock(text: string, rules: StateSyncRule[]): boolean {
+  // 先只剥「完整闭合块」，再看是否仍残留开标签；残留即被截断的残缺块
+  let closedOnly = String(text || '')
+  for (const rule of rules) {
+    if (rule.disabled) continue
+    const re = compileRule(rule)
+    if (!re) continue
+    re.lastIndex = 0
+    closedOnly = closedOnly.replace(re, '')
+  }
+  for (const rule of rules) {
+    if (rule.disabled || !rule.openPattern) continue
+    try {
+      const openRe = new RegExp(rule.openPattern, rule.flags?.includes('i') ? 'i' : '')
+      if (openRe.test(closedOnly)) return true
+    } catch { /* ignore */ }
+  }
+  return false
 }

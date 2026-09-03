@@ -235,7 +235,12 @@ const genElapsed = computed(() => Math.max(0, Math.round((nowTick.value - chat.g
 const genStatusText = computed(() => {
   const s = genElapsed.value
   if (!chat.streamConnected) return `连接中… ${s}s`
-  if (chat.awaitingFirstDelta) return `已连接 · 等待模型首字… ${s}s（大上下文 / 渠道排队可能 30~90 秒）`
+  if (chat.awaitingFirstDelta) {
+    // 推理模型（Gemini 2.5 Pro 等）深度思考阶段服务器不下发任何内容，首字可达 20~40s，属正常
+    return s >= 8
+      ? `已连接 · 模型深度思考中… ${s}s（推理模型思考阶段不下发内容，首字可能需要 20~40 秒，请耐心等待）`
+      : `已连接 · 等待模型首字… ${s}s（大上下文 / 渠道排队可能 30~90 秒）`
+  }
   return `生成中 ${s}s`
 })
 

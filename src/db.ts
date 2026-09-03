@@ -61,7 +61,8 @@ export const DEFAULT_SETTINGS: Settings = {
     reasoningEffort: 'medium',
   },
   temperature: 0.8,
-  maxTokens: 2048,
+  // 4096：思考类模型（Gemini 2.5 Pro 等）的思考 token 也占用输出上限，2048 会截断正文与面板更新块
+  maxTokens: 4096,
   reasoningEffort: 'medium',
   contextMessages: 50,
   themeMode: 'light' as const,

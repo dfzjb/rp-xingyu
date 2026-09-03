@@ -12,7 +12,7 @@ import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
 import { normalizeUiTemplates } from '../lib/uitemplate'
 import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseUpdatesPayload } from '../lib/ui-template-state'
-import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks } from '../lib/state-sync'
+import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks, hasUnclosedSyncBlock } from '../lib/state-sync'
 import { useCharactersStore } from './characters'
 import { usePersonasStore } from './personas'
 import { useSettingsStore } from './settings'
@@ -307,17 +307,21 @@ export const useChatStore = defineStore('chat', () => {
     const settings = useSettingsStore()
     if (settings.settings.uiTemplateAuxAnalysis === false) return
     if (auxAnalysisRunning.has(s.id)) return
+    // 副模型优先；未配置副模型时回退主模型当前槽位做一次轻量补全（max_tokens 收紧到 900，
+    // 避免「主模型更新块被 max_tokens 截断 / 未输出块」时 UI 完全跟不上剧情）
+    const auxModel = settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel
+    const fallbackMain = !auxModel
     const cfg: ApiConfig = {
       baseUrl: settings.settings.apiBaseUrl,
       apiKey: settings.settings.apiKey,
-      model: settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel,
+      model: auxModel || settings.activeModel,
       temperature: 0.3,
-      maxTokens: 3000,
+      maxTokens: fallbackMain ? 900 : 3000,
       reasoningEffort: 'minimal',
     }
     if (!cfg.apiKey) return
     if (!cfg.model) {
-      setUiTplStatus('skip', '面板变量：未配置分析副模型，兜底未运行（UI 模板页可配置）')
+      setUiTplStatus('skip', '面板变量：未选择模型，兜底未运行')
       return
     }
     auxAnalysisRunning.add(s.id)
@@ -347,7 +351,7 @@ export const useChatStore = defineStore('chat', () => {
       s.uiTemplateStates = result.states
       // 同步刷新本节点快照，保证分支回滚语义一致
       node.extra = { ...(node.extra || {}), uiTplState: result.states }
-      setUiTplStatus('ok', `面板变量：副模型更新 ${result.changedCount} 项`)
+      setUiTplStatus('ok', `面板变量：${fallbackMain ? '主模型补全' : '副模型更新'} ${result.changedCount} 项`)
       await persist(s)
     } catch (err) {
       setUiTplStatus('error', `面板变量：副模型分析失败（${(err as Error)?.message || '未知错误'}）`)
@@ -468,16 +472,20 @@ export const useChatStore = defineStore('chat', () => {
     awaitingFirstDelta.value = true
     let lastPersist = Date.now()
     let finished = false
-    const finish = async () => {
+    const finish = async (finishReason?: string) => {
       if (finished) return
       finished = true
       node.streaming = false
       generating.value = false
       abortFn = null
+      // 输出是否撞上 max_tokens 上限（思考模型的思考 token 也占输出预算，常把正文尾部更新块截断）
+      const truncated = finishReason === 'length'
 
       // 解析 AI 回复中的变量更新指令（规则化：内置方言 + 卡级规则）并更新会话状态
       let mainUpdateCount = 0
       let effective = uiStates
+      // 是否残留「开标签已写、闭合标签缺失」的残缺更新块（截断的典型表现）
+      const unclosed = uiTpls.length ? hasUnclosedSyncBlock(node.content, syncRules) : false
       if (uiTpls.length) {
         const updates = extractStateSyncUpdates(node.content, syncRules)
         mainUpdateCount = updates.length
@@ -486,7 +494,7 @@ export const useChatStore = defineStore('chat', () => {
           effective = result.states
           if (result.changedCount > 0) {
             s.uiTemplateStates = result.states
-            setUiTplStatus('ok', `面板变量：主模型更新 ${result.changedCount} 项`)
+            setUiTplStatus('ok', `面板变量：主模型更新 ${result.changedCount} 项${truncated ? '（输出达上限被截断，建议调大 max_tokens）' : ''}`)
           } else {
             setUiTplStatus('empty', '面板变量：主模型更新块无变化')
           }
@@ -494,15 +502,17 @@ export const useChatStore = defineStore('chat', () => {
         // 把本节点时点的变量状态快照写到节点上（分支切换/重 roll/删除时按快照回滚）
         node.extra = { ...(node.extra || {}), uiTplState: effective }
       }
-      // 从可见正文中剥离变量更新块（无模板也要剥，机器指令不该出现在正文里）
+      // 从可见正文中剥离变量更新块（含被截断的残缺开块；无模板也要剥，机器指令不该出现在正文里）
       node.content = stripStateSyncBlocks(node.content, syncRules)
       // 剥离后正文为空的兜底：不留一个空白气泡（常见于模型只输出了变量更新块、
       // 内容被安全过滤或 max_tokens 不足）
       if (!node.content.trim()) {
-        node.content = '（模型本次没有输出正文：可能只输出了面板变量更新、内容被安全过滤，或 max_tokens 不足。可重 roll 或换模型试试。）'
+        node.content = truncated
+          ? '（模型输出达到 max_tokens 上限被截断：思考类模型的思考 token 也占用该上限，请在生成设置里调大 max_tokens（建议 ≥4096）后重 roll。）'
+          : '（模型本次没有输出正文：可能只输出了面板变量更新、内容被安全过滤，或 max_tokens 不足。可重 roll 或换模型试试。）'
       }
-      // 主模型没输出任何更新块 → 副模型兜底分析（后台静默，对齐旧版二次分析管线）
-      if (uiTpls.length && mainUpdateCount === 0) {
+      // 主模型没输出可用更新块（含块被截断）→ 兜底分析：配了副模型用副模型，否则用主模型轻量补全
+      if (uiTpls.length && (mainUpdateCount === 0 || unclosed)) {
         void runAuxTemplateAnalysis(s, node, path, uiTpls, effective)
       }
 
@@ -530,7 +540,7 @@ export const useChatStore = defineStore('chat', () => {
         awaitingFirstDelta.value = false
         node.reasoning = (node.reasoning || '') + d
       },
-      onDone: () => { void finish() },
+      onDone: (_full, _reasoning, finishReason) => { void finish(finishReason) },
       onError: (err) => {
         generatingError.value = err.message
         node.content += `\n\n> ⚠️ 生成失败：${err.message}`
@@ -724,9 +734,10 @@ export const useChatStore = defineStore('chat', () => {
           }
           lastAi.extra = { ...(lastAi.extra || {}), uiTplState: effective }
         }
+        const unclosedCont = uiTpls.length ? hasUnclosedSyncBlock(lastAi.content, syncRules) : false
         lastAi.content = stripStateSyncBlocks(lastAi.content, syncRules)
-        // 主模型没输出更新块 → 副模型兜底分析（后台静默）
-        if (uiTpls.length && mainUpdateCount === 0) {
+        // 主模型没输出更新块（含块被 max_tokens 截断）→ 兜底分析（副模型优先，否则主模型轻量补全）
+        if (uiTpls.length && (mainUpdateCount === 0 || unclosedCont)) {
           void runAuxTemplateAnalysis(s, lastAi, chain, uiTpls, effective)
         }
         // 用量统计：续写无新用户输入，发送口径计 0

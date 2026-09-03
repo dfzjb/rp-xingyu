@@ -224,6 +224,7 @@ async function refreshVideoModels() {
       <span class="param-label">最大 token</span>
       <NInputNumber v-model:value="draft.maxTokens" size="small" :min="64" :max="128000" style="flex: 1" @update:value="commit()" />
     </div>
+    <div class="hint" style="margin: -4px 0 12px 102px">思考类模型（Gemini 2.5 Pro 等）的「思考 token」也占用此上限，过小会截断正文和面板变量更新，建议 ≥4096。</div>
 
     <div class="param-row">
       <span class="param-label">上下文条数</span>
