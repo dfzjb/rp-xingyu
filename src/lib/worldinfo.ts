@@ -258,8 +258,13 @@ export interface WIResult {
   byDepth: { depth: number; role: 'system' | 'user' | 'assistant'; content: string; comment: string; order: number }[]
 }
 
-/** 默认递归激活步数（对齐旧版链式激活体验；0 = 关闭递归） */
-export const DEFAULT_WI_RECURSION_STEPS = 3
+/**
+ * 默认递归激活步数。
+ * 对齐旧版：旧版世界书只对对话楼层做一轮关键词扫描，不存在「已激活条目内容再去激活别的条目」
+ * 的链式扩散，故默认 0（关闭递归），避免一条总纲条目把整本书无关条目链式拉进 prompt。
+ * 需要 ST 式递归扫描时由调用方显式传入 >0 的步数。
+ */
+export const DEFAULT_WI_RECURSION_STEPS = 0
 
 /**
  * 解析世界书激活结果。
@@ -276,14 +281,15 @@ export function resolveWorldInfo(
     .map((e) => (e && (e.position === 'before_char' || e.position === 'after_char' || e.position === 'at_depth') ? e : normalizeWorldInfoEntry(e)))
     .filter((e): e is WorldInfoEntry => !!e)
   const active = normalized.filter((e) => e.enabled !== false && String(e.content || '').trim())
-  const maxScan = Math.max(2, ...active.map((e) => typeof e.scanDepth === 'number' ? e.scanDepth : 2))
 
   const activatedSet = new Set<WorldInfoEntry>()
   const activatedList: Activated[] = []
 
   function tryActivate(e: WorldInfoEntry, source: string[]): boolean {
     if (activatedSet.has(e)) return false
-    const d = typeof e.scanDepth === 'number' ? e.scanDepth : maxScan
+    // 对齐旧版：条目未显式设 scanDepth 时用全局默认 2（只扫最近 2 楼），
+    // 不再用「所有条目的最大扫描深度」当缺省值，避免个别大深度条目把其余条目窗口一并放大
+    const d = typeof e.scanDepth === 'number' ? e.scanDepth : 2
     const windowText = source.slice(-Math.max(1, d)).join('\n')
     if (!primaryHit(e, windowText) && !e.constant) return false
     if (!secondaryPass(e, windowText)) return false

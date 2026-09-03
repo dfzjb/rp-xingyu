@@ -47,6 +47,15 @@ describe('resolveWorldInfo 基础激活', () => {
     expect(hit.afterChar).toEqual(['龙设定'])
   })
 
+  it('缺省扫描深度固定为 2，不被其他条目的大 scanDepth 联动放大（对齐旧版全局 2）', () => {
+    // 一条大深度条目（20 楼）不应让未设深度的条目也按 20 楼扫描
+    const wide: WorldInfoEntry = { keys: ['远古'], content: '大深度条目', scanDepth: 20 }
+    const normal: WorldInfoEntry = { keys: ['古龙'], content: '默认深度条目' }
+    // 默认深度 2：第 3 楼（距末尾 2 层以外）的「古龙」不激活 normal；wide 因 20 楼窗口仍激活
+    const r = resolveWorldInfo([wide, normal], msgs('古龙在远古', '无关', '无关', '当前楼'))
+    expect(r.afterChar).toEqual(['大深度条目'])
+  })
+
   it('大小写敏感开关', () => {
     const ins = [{ keys: ['Dragon'], content: 'X', caseSensitive: true }]
     expect(resolveWorldInfo(ins, msgs('a dragon b')).afterChar).toEqual([])
@@ -137,12 +146,16 @@ describe('递归激活', () => {
     ])
   })
 
-  it('默认递归步数非零（链式条目默认可激活）', () => {
+  it('默认不做递归链式扩散（对齐旧版：只扫一轮对话楼层）', () => {
     const a = { keys: ['起点'], content: '提到钥匙' }
     const b = { keys: ['钥匙'], content: '提到门' }
     const c = { keys: ['门'], content: '门后秘密' }
-    const r = resolveWorldInfo([a, b, c], msgs('这是起点'))
-    expect(r.afterChar).toContain('门后秘密')
+    const r0 = resolveWorldInfo([a, b, c], msgs('这是起点'))
+    // 默认递归 0：只有主键命中「起点」的 a 激活，b/c 靠条目内容链式带出，不激活
+    expect(r0.afterChar).toEqual(['提到钥匙'])
+    // 显式给足递归步数时才链式激活到 c
+    const r3 = resolveWorldInfo([a, b, c], msgs('这是起点'), 3)
+    expect(r3.afterChar).toContain('门后秘密')
   })
 })
 

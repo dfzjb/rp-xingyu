@@ -47,7 +47,8 @@ function add() {
       affectsUser: true,
       affectsAI: true,
       applyOnDisplay: true,
-      applyOnSend: true,
+      // 对齐旧版/ST：新建正则默认只做显示层美化，不进发给模型的 prompt；需要改写模型所见文本时手动勾「发送层」
+      applyOnSend: false,
       disabled: false,
     },
   ]
@@ -121,7 +122,7 @@ function isEnabled(s: RScript): boolean {
         <n-checkbox size="small" :checked="s.applyOnDisplay !== false" @update:checked="(v: boolean) => update(i, { applyOnDisplay: v })">
           显示层
         </n-checkbox>
-        <n-checkbox size="small" :checked="s.applyOnSend !== false" @update:checked="(v: boolean) => update(i, { applyOnSend: v })">
+        <n-checkbox size="small" :checked="s.applyOnSend === true" title="勾选后才会在发送给模型前改写文本（进 prompt）；默认不勾＝仅界面显示美化，模型看到的是原文" @update:checked="(v: boolean) => update(i, { applyOnSend: v })">
           发送层
         </n-checkbox>
       </div>

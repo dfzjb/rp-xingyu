@@ -107,7 +107,7 @@ describe('@深度世界书真实插入（回归 W3）', () => {
 describe('发送层正则 depth 定向（回归 R2）', () => {
   const opts: PromptOptions = {
     regexEnabled: true,
-    regexScripts: [{ pattern: '目标', replace: '命中', minDepth: 0, maxDepth: 0 }],
+    regexScripts: [{ pattern: '目标', replace: '命中', minDepth: 0, maxDepth: 0, applyOnSend: true }],
   }
   it('只改最新楼（depth=0），更早楼层保持原样', () => {
     const c = char()
@@ -115,5 +115,31 @@ describe('发送层正则 depth 定向（回归 R2）', () => {
     const dlg = dialogue(buildPrompt(c, undefined, nodes, 20, opts))
     expect(dlg.find((m) => m.content === '早期目标')).toBeTruthy()
     expect(dlg.find((m) => m.content === '最新命中')).toBeTruthy()
+  })
+})
+
+describe('正则默认不污染发给模型的 prompt（对齐旧版 processRegex）', () => {
+  it('未勾「发送层」的正则只做显示美化，历史原文进 prompt', () => {
+    const opts: PromptOptions = {
+      regexEnabled: true,
+      // 内部形状缺省 applyOnSend=false；ST/旧版导入缺省也只显示
+      regexScripts: [{ pattern: '密语', replace: '【已隐藏】' }],
+    }
+    const c = char()
+    const nodes = chain(['他说出密语', 'AI回复'])
+    const dlg = dialogue(buildPrompt(c, undefined, nodes, 20, opts))
+    // 模型看到的仍是原文，不被显示层正则改写
+    expect(dlg.find((m) => m.content === '他说出密语')).toBeTruthy()
+    expect(dlg.find((m) => m.content.includes('【已隐藏】'))).toBeFalsy()
+  })
+  it('显式勾「发送层」(promptOnly) 的正则才改写模型所见文本', () => {
+    const opts: PromptOptions = {
+      regexEnabled: true,
+      regexScripts: [{ pattern: '密语', replace: 'XXXX', applyOnSend: true }],
+    }
+    const c = char()
+    const nodes = chain(['他说出密语', 'AI回复'])
+    const dlg = dialogue(buildPrompt(c, undefined, nodes, 20, opts))
+    expect(dlg.find((m) => m.content === '他说出XXXX')).toBeTruthy()
   })
 })

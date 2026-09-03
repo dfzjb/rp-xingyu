@@ -59,7 +59,8 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
       affectsUser: o.affectsUser !== false,
       affectsAI: o.affectsAI !== false,
       applyOnDisplay: o.applyOnDisplay !== false,
-      applyOnSend: o.applyOnSend !== false,
+      // 对齐旧版/ST：正则默认只做显示层美化，不进发给模型的 prompt；需显式开启才在发送层执行
+      applyOnSend: o.applyOnSend === true,
       disabled: o.disabled === true,
       minDepth: typeof o.minDepth === 'number' ? o.minDepth : null,
       maxDepth: typeof o.maxDepth === 'number' ? o.maxDepth : null,
@@ -82,8 +83,12 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
       affectsUser = pl.includes(1)
       affectsAI = pl.includes(2)
     }
-    const mdOnly = o.markdownOnly === true
-    const promptOnly = o.promptOnly === true
+    // 对齐旧版 processRegex / SillyTavern 语义：
+    //   两个开关都不勾 = 仅显示层美化（不进发给模型的 prompt）；
+    //   markdownOnly=仅显示；promptOnly=仅发送层（进 prompt，不显示）；两者同勾按仅显示处理。
+    let mdOnly = o.markdownOnly === true
+    let promptOnly = o.promptOnly === true
+    if (mdOnly && promptOnly) promptOnly = false
     const s: RegexScript = {
       id: typeof o.id === 'string' ? o.id : undefined,
       name: String(o.scriptName || o.name || '未命名'),
@@ -92,8 +97,8 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
       flags,
       affectsUser,
       affectsAI,
-      applyOnDisplay: mdOnly || (!promptOnly && !mdOnly),
-      applyOnSend: promptOnly || (!promptOnly && !mdOnly),
+      applyOnDisplay: !promptOnly,
+      applyOnSend: promptOnly,
       disabled: o.disabled === true,
       minDepth: typeof o.minDepth === 'number' ? o.minDepth : null,
       maxDepth: typeof o.maxDepth === 'number' ? o.maxDepth : null,
@@ -109,6 +114,11 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
     affectsUser = pl.includes(1)
     affectsAI = pl.includes(2)
   }
+  // 旧版 processRegex：markdownOnly/promptOnly 缺省都为 false，正则默认只在显示层执行、
+  // 不进发给模型的 prompt；仅当脚本显式 promptOnly 时才在发送层执行
+  let legacyMd = o.markdownOnly === true
+  let legacyPrompt = o.promptOnly === true
+  if (legacyMd && legacyPrompt) legacyPrompt = false
   return {
     id: typeof o.id === 'string' ? o.id : undefined,
     name: String(o.name || '未命名'),
@@ -117,8 +127,8 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
     flags,
     affectsUser,
     affectsAI,
-    applyOnDisplay: true,
-    applyOnSend: true,
+    applyOnDisplay: !legacyPrompt,
+    applyOnSend: legacyPrompt,
     disabled: o.disabled === true,
   }
 }

@@ -24,9 +24,15 @@ describe('normalizeRegexScript', () => {
     expect(s.flags).toBe('gi')
     expect(s.affectsUser).toBe(false)
     expect(s.affectsAI).toBe(true)
-    // 未指定 markdownOnly/promptOnly → 双层生效（酒馆默认行为）
+    // 未指定 markdownOnly/promptOnly → 对齐旧版/ST：默认仅显示层，不进发给模型的 prompt
     expect(s.applyOnDisplay).toBe(true)
-    expect(s.applyOnSend).toBe(true)
+    expect(s.applyOnSend).toBe(false)
+  })
+
+  it('酒馆格式：显式 promptOnly 才在发送层执行', () => {
+    const p = normalizeRegexScript({ scriptName: 'p', findRegex: 'x', replaceString: 'y', promptOnly: true })!
+    expect(p.applyOnDisplay).toBe(false)
+    expect(p.applyOnSend).toBe(true)
   })
 
   it('酒馆格式：markdownOnly / promptOnly 各自只开一层', () => {
@@ -44,6 +50,13 @@ describe('normalizeRegexScript', () => {
     expect(s.replace).toBe('新')
     expect(s.affectsUser).toBe(true)
     expect(s.affectsAI).toBe(false)
+    // 旧版脚本默认 markdownOnly/promptOnly 都不勾 → 仅显示层，发送层不执行（对齐旧版 processRegex）
+    expect(s.applyOnDisplay).toBe(true)
+    expect(s.applyOnSend).toBe(false)
+    // 旧版脚本显式 promptOnly 时才进发送层
+    const p = normalizeRegexScript({ name: '进prompt', regex: 'a', replacement: 'b', promptOnly: true })!
+    expect(p.applyOnDisplay).toBe(false)
+    expect(p.applyOnSend).toBe(true)
   })
 })
 
@@ -121,7 +134,8 @@ describe('内联修饰符兼容（(?i)(?s)(?m)，对齐旧版）', () => {
 })
 
 describe('minDepth/maxDepth 深度定向', () => {
-  const scripts = [{ pattern: '旧', replace: '新', minDepth: 1, maxDepth: 2 }]
+  // 本组专门验证发送层深度定向，需显式开启 applyOnSend（默认仅显示层）
+  const scripts = [{ pattern: '旧', replace: '新', minDepth: 1, maxDepth: 2, applyOnSend: true }]
   it('落在深度区间内才替换', () => {
     expect(applyRegexScripts('旧', scripts, PLACEMENT_AI_OUTPUT, 'send', { depth: 0 })).toBe('旧')
     expect(applyRegexScripts('旧', scripts, PLACEMENT_AI_OUTPUT, 'send', { depth: 1 })).toBe('新')
