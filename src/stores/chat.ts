@@ -316,7 +316,7 @@ export const useChatStore = defineStore('chat', () => {
       apiKey: settings.settings.apiKey,
       model: auxModel || settings.activeModel,
       temperature: 0.3,
-      maxTokens: fallbackMain ? 900 : 3000,
+      maxTokens: fallbackMain ? 2000 : 3000,
       reasoningEffort: 'minimal',
     }
     if (!cfg.apiKey) return

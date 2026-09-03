@@ -234,7 +234,10 @@ export function streamChat(
     max_tokens: cfg.maxTokens,
   }
   if (cfg.reasoningEffort && cfg.reasoningEffort !== 'none') {
-    body.reasoning_effort = cfg.reasoningEffort
+    // 渠道兼容：Gemini 认 minimal，而 deepseek 等渠道只认 low|medium|high|xhigh|max；
+    // 统一把 minimal 映射为三方交集 low（语义同为「最少思考」），避免后台辅助调用被 400 拒绝
+    const EFFORT_COMPAT: Record<string, string> = { minimal: 'low' }
+    body.reasoning_effort = EFFORT_COMPAT[cfg.reasoningEffort] ?? cfg.reasoningEffort
   }
 
   let full = ''
