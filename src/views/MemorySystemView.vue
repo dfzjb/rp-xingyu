@@ -237,8 +237,8 @@ const embeddingModelOptions = computed(() => {
                   @update:value="(v: string) => settings.patch({ memoryMode: v as never })"
                 />
               </div>
-              <div class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
-                <label>总结模式副模型（未配置 = 不自动提炼/评判，不再回退主模型）</label>
+              <div v-if="settings.settings.memoryMode !== 'vector'" class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
+                <label>总结模式副模型（同时负责好感度评判；未配置 = 不自动总结/评判，不回退主模型）</label>
                 <NSelect
                   size="small"
                   filterable
