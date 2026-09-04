@@ -7,11 +7,11 @@ import { streamChat, chatOnce, type ApiConfig } from '../lib/api'
 import { buildPrompt } from '../lib/prompt'
 import { deepPlain } from '../lib/plain'
 import { distillMemoriesFromChat, backfillMemories, searchVectorMemories, autoIngestVectorFloors } from '../lib/memories'
-import { evaluateNpcsAutonomously } from '../lib/affinity'
+import { mergeNpcEvalResults, listNpcAffinities, affinityScore, deriveStage } from '../lib/affinity'
 import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
 import { normalizeUiTemplates } from '../lib/uitemplate'
-import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseUpdatesPayload } from '../lib/ui-template-state'
+import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseAuxPayload } from '../lib/ui-template-state'
 import { pickLightModel } from '../lib/aux-model'
 import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks } from '../lib/state-sync'
 import { useCharactersStore } from './characters'
@@ -330,7 +330,7 @@ export const useChatStore = defineStore('chat', () => {
       apiKey: settings.settings.apiKey,
       model: auxModel || settings.activeModel,
       temperature: 0.3,
-      maxTokens: Number(settings.settings.uiAuxMaxTokens) || 2500,
+      maxTokens: Number(settings.settings.uiAuxMaxTokens) || 3000,
       // 自动挑选的非思考模型不下发 reasoning_effort（不思考，也避免个别网关对该参数报错）；
       // 显式配置或回退主模型时用最小思考档（api 出口会把 minimal 兼容映射为 low）
       reasoningEffort: auxKind === 1 ? 'none' : 'minimal',
@@ -351,23 +351,43 @@ export const useChatStore = defineStore('chat', () => {
           content: parseCot(n.content || '').main.slice(0, 3000),
         }))
         .filter((f) => f.content.trim())
-      const messages = buildAuxAnalysisMessages(uiTpls, states, floors)
+      // 已有好感档案简要，供模型对照并只评本场出场 NPC
+      const npcRows = await listNpcAffinities(s.id)
+      const existingNpcs = npcRows.map((a) => ({
+        npcName: a.npcName,
+        score: Math.round(affinityScore(a)),
+        stage: deriveStage(a),
+      }))
+      const messages = buildAuxAnalysisMessages(uiTpls, states, floors, existingNpcs)
       if (!messages.length) return
       const raw = await chatOnce(cfg, messages)
-      const updates = parseUpdatesPayload(parseCot(raw).main)
-      if (!updates.length) {
-        setUiTplStatus('empty', '面板变量：副模型分析完成，无变化')
-        return
-      }
+      // 一次调用同时产出「模板变量更新」与「出场 NPC 好感」，两部分互不拖累
+      const { updates, affinity } = parseAuxPayload(parseCot(raw).main)
+
+      // ① 模板变量更新
       const result = applyUiTemplateUpdates(states, uiTpls, updates)
-      if (result.changedCount <= 0) {
-        setUiTplStatus('empty', '面板变量：副模型分析完成，无变化')
+      if (result.changedCount > 0) {
+        s.uiTemplateStates = result.states
+        // 同步刷新本节点快照，保证分支回滚语义一致
+        node.extra = { ...(node.extra || {}), uiTplState: result.states }
+      }
+
+      // ② 出场 NPC 好感评判（独立 try：解析/落库失败绝不影响面板变量更新）
+      let affCount = 0
+      if (affinity.length) {
+        try {
+          const aff = await mergeNpcEvalResults(s.id, affinity)
+          affCount = aff.length
+        } catch { /* 好感落库失败静默，下轮再试 */ }
+      }
+
+      if (result.changedCount <= 0 && affCount <= 0) {
+        setUiTplStatus('empty', '面板变量：轻量模型分析完成，无变化')
         return
       }
-      s.uiTemplateStates = result.states
-      // 同步刷新本节点快照，保证分支回滚语义一致
-      node.extra = { ...(node.extra || {}), uiTplState: result.states }
-      setUiTplStatus('ok', `面板变量：${auxKind === 0 ? '副模型' : auxKind === 1 ? '轻量模型' : '主模型'}补全 ${result.changedCount} 项`)
+      const who = auxKind === 0 ? '副模型' : auxKind === 1 ? '轻量模型' : '主模型'
+      const affTail = affCount > 0 ? `，好感更新 ${affCount} 人` : ''
+      setUiTplStatus('ok', `面板变量：${who}补全 ${result.changedCount} 项${affTail}`)
       await persist(s)
     } catch (err) {
       setUiTplStatus('error', `面板变量：副模型分析失败（${(err as Error)?.message || '未知错误'}）`)
@@ -570,7 +590,7 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 记忆自动巡逻（两条独立自动入库通道）：
    *  A. 向量模式：配好 embedding 模型即把对话原文分片向量化入库（无需聊天副模型），轻量增量、独立节流；
-   *  B. 总结模式：副模型按楼层阈值提炼记忆 + 自主评估出场 NPC 好感度（失败静默）。
+   *  B. 总结模式：副模型按楼层阈值把较老楼层提炼为记忆摘要（失败静默）。NPC 好感度已改由每轮 UI 补全负责。
    */
   async function maybeAutoPatrol(s: ChatSession) {
     const settings = useSettingsStore()
@@ -610,7 +630,7 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    // ── B. 副模型任务：好感度自主评判 + 总结式补录（未配副模型则到此为止）──
+    // ── B. 副模型任务：总结式补录（好感度已改由每轮 UI 补全负责；未配副模型则到此为止）──
     if (!hasAux) return
     const floors = Math.max(5, settings.settings.memoryPatrolFloors || 20)
     const totalFloors = Object.keys(s.nodes).length
@@ -625,16 +645,14 @@ export const useChatStore = defineStore('chat', () => {
       const cfg = {
         baseUrl: settings.settings.apiBaseUrl,
         apiKey: settings.settings.apiKey,
-        // 副模型：记忆/评判专用（未配置时不会走到这里，不默认占用主模型）
+        // 副模型：记忆总结专用（未配置时不会走到这里，不默认占用主模型）
         model: settings.settings.memoryAuxModel,
         temperature: 0.3,
         maxTokens: 1024,
         reasoningEffort: 'minimal',
       }
-      // 好感度自主评判（多 NPC）
-      try {
-        await evaluateNpcsAutonomously(cfg, path, s.id, floors)
-      } catch { /* 静默 */ }
+      // 好感度已并入每轮 UI 补全（runAuxTemplateAnalysis 一次调用同时出变量+好感），
+      // 这里不再重复评判；记忆巡逻只负责把较老楼层沉淀成摘要。
       // 记忆补录（保留最近楼层之外）
       await backfillMemories(cfg, path, s.id, {
         keepFloors: settings.settings.memoryKeepFloors || 32,

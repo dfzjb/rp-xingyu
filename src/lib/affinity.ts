@@ -211,35 +211,20 @@ export interface NpcEvalResult {
   conflict: number
 }
 
-/**
- * AI 自主评判：分析最近楼层，为每个出场 NPC 生成/更新好感度档案。
- * 新名字自动建档；已有条目按 新值60%/旧值40% 平滑合并。
- */
-export async function evaluateNpcsAutonomously(
-  cfg: ApiConfig,
-  chainNodes: MsgNode[],
-  sessionId: string,
-  limit = 24,
-): Promise<NpcAffinity[]> {
-  const slice = chainNodes.slice(-limit)
-  const recent = slice
-    .map((n) => `${n.role === 'user' ? '用户' : (n.name || '角色')}: ${parseCot(n.content || '').main.slice(0, 400)}`)
-    .filter((t) => t.trim().length > 1)
-    .join('\n\n')
-  if (!recent.trim()) throw new Error('没有可分析的剧情')
+/** 评判输入：名字必填，各维度可缺（漏评维度沿用旧值/默认）——模型与 UI 补全都可能只给部分维度 */
+export type NpcEvalInput = Partial<Omit<NpcEvalResult, 'npcName'>> & { npcName: string }
 
+/**
+ * 把一批 AI 评判结果合并入库：新名字自动建档；已有条目按 新值60%/旧值40% 平滑合并。
+ * 独立评判（evaluateNpcsAutonomously）与「UI 补全搭车返回 affinity」共用这一段，
+ * 保证无论哪条通道产出的好感数值，落库口径一致。
+ */
+export async function mergeNpcEvalResults(
+  sessionId: string,
+  list: NpcEvalInput[],
+): Promise<NpcAffinity[]> {
   const existing = await listNpcAffinities(sessionId)
   const byName = new Map(existing.map((e) => [e.npcName, e]))
-
-  const raw = await chatOnce({ ...cfg, temperature: 0.2 }, [
-    { role: 'system', content: EVAL_SYSTEM },
-    { role: 'user', content: `已知 NPC 档案名：${existing.map((e) => e.npcName).join('、') || '（暂无）'}\n\n最近聊天记录：\n${recent}` },
-  ])
-
-  const m = raw.match(/\[[\s\S]*\]/)
-  if (!m) throw new Error('模型未返回有效 JSON 数组')
-  const list = JSON.parse(m[0]) as NpcEvalResult[]
-  if (!Array.isArray(list)) throw new Error('模型返回格式错误')
 
   const updated: NpcAffinity[] = []
   for (const item of list) {
@@ -262,4 +247,36 @@ export async function evaluateNpcsAutonomously(
     updated.push(next)
   }
   return updated
+}
+
+/**
+ * AI 自主评判：分析最近楼层，为每个出场 NPC 生成/更新好感度档案（独立一次模型调用，
+ * 供好感度页手动「重新评估」使用；自动每轮评判已并入 UI 补全，见 runAuxTemplateAnalysis）。
+ */
+export async function evaluateNpcsAutonomously(
+  cfg: ApiConfig,
+  chainNodes: MsgNode[],
+  sessionId: string,
+  limit = 24,
+): Promise<NpcAffinity[]> {
+  const slice = chainNodes.slice(-limit)
+  const recent = slice
+    .map((n) => `${n.role === 'user' ? '用户' : (n.name || '角色')}: ${parseCot(n.content || '').main.slice(0, 400)}`)
+    .filter((t) => t.trim().length > 1)
+    .join('\n\n')
+  if (!recent.trim()) throw new Error('没有可分析的剧情')
+
+  const existing = await listNpcAffinities(sessionId)
+
+  const raw = await chatOnce({ ...cfg, temperature: 0.2 }, [
+    { role: 'system', content: EVAL_SYSTEM },
+    { role: 'user', content: `已知 NPC 档案名：${existing.map((e) => e.npcName).join('、') || '（暂无）'}\n\n最近聊天记录：\n${recent}` },
+  ])
+
+  const m = raw.match(/\[[\s\S]*\]/)
+  if (!m) throw new Error('模型未返回有效 JSON 数组')
+  const list = JSON.parse(m[0]) as NpcEvalResult[]
+  if (!Array.isArray(list)) throw new Error('模型返回格式错误')
+
+  return mergeNpcEvalResults(sessionId, list)
 }

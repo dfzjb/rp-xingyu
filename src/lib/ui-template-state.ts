@@ -188,6 +188,7 @@ export function buildAuxAnalysisMessages(
   templates: UiTemplate[],
   states: UiTemplateStateMap,
   recentFloors: { role: 'user' | 'assistant'; name: string; content: string }[],
+  existingNpcs: { npcName: string; score?: number; stage?: string }[] = [],
 ): { role: 'system' | 'user'; content: string }[] {
   const enabled = templates.filter((t) => t.enabled && t.htmlTemplate)
   if (!enabled.length || !recentFloors.length) return []
@@ -199,14 +200,22 @@ export function buildAuxAnalysisMessages(
     variableSchema: t.variableSchema || '',
   }))
 
+  const npcRoster = existingNpcs.length
+    ? existingNpcs.map((n) => `${n.npcName}（综合${n.score ?? '?'}·${n.stage ?? '未知阶段'}）`).join('、')
+    : '（暂无档案）'
   const system = [
-    '你是旧版的UI变量更新器。根据用户消息里提供的最近对话，更新UI模板中受剧情影响的变量。',
-    '只返回JSON，不要解释，不要输出Markdown，不要展开思考过程。',
-    '返回格式固定为 {"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}]}。',
-    'variables 只包含「本次确实发生变化」的路径（通常十几到几十个）；值可以是文字、数字、对象或JSON数组。',
+    '你是旧版的UI状态更新器。根据用户消息里提供的最近对话，同时完成两件事：①更新UI模板中受剧情影响的变量；②给本场出场的NPC做好感度评判。',
+    '只返回一个JSON对象，不要解释，不要输出Markdown，不要展开思考过程。',
+    '返回格式固定为 {"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}],"affinity":[...NPC...]}。',
+    '【updates 变量更新】variables 只包含「本次确实发生变化」的路径（通常十几到几十个）；值可以是文字、数字、对象或JSON数组。',
     '严禁把没变化的字段原样回写、严禁输出整份变量：全量回写会让输出超长被截断、反而导致更新失败。',
     '装备栏、背包、动态、聊天记录这类列表字段可直接返回完整数组，也可用 "feed.0.text" 这种路径更新单项。',
-    '没有变化则返回 {"updates":[]}。不要修改HTML，不要编造模板未定义的字段，变量路径必须与当前变量完全一致。',
+    '没有变量变化则 updates 返回 []。不要修改HTML，不要编造模板未定义的字段，变量路径必须与当前变量完全一致。',
+    '【affinity 好感评判】只评最近对话中实际出场、与玩家互动的AI侧角色（玩家本人不是NPC）；已在档案但本场未出场的不要重复输出，本场无NPC则返回 []。',
+    '每个NPC在三条相对轴上打0-100整数（方向相反、此消彼长）：interest兴趣/annoyance厌烦（关注轴）、attraction吸引/disgust反感（心动轴）、trust信任/cringe尴尬（自在轴），另有 conflict冲突等级0-4（0无冲突/1摩擦/2争执/3冷战/4决裂）。',
+    '评分要有惯性：没有明显事件时只小幅浮动，重大事件（告白/背叛/救命）才可大幅调整。',
+    `已有NPC档案：${npcRoster}。`,
+    'affinity 单项格式 {"npcName":"角色名","interest":0-100,"annoyance":0-100,"attraction":0-100,"disgust":0-100,"trust":0-100,"cringe":0-100,"conflict":0-4}；面板里的 npcN_favor 数值应与该NPC综合好感一致（0-100）。',
     buildSceneRefreshHint(payload.map((p) => ({ currentVariables: p.currentVariables }))),
     '',
     '模板与当前变量如下：',
@@ -250,24 +259,26 @@ function salvageTruncatedUpdates(body: string): unknown {
   return null
 }
 
-export function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
+/** 去围栏 + 直接 parse，失败则截取最外层对象，再失败则按截断 JSON 抢救；返回解析出的对象/数组 */
+function parsePayloadObject(raw: string): unknown {
   const body = String(raw || '')
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/i, '')
     .trim()
-  let parsed: unknown
   try {
-    parsed = JSON.parse(body)
+    return JSON.parse(body)
   } catch {
-    // 尝试截取最外层 { ... }
     const s = body.indexOf('{')
     const e = body.lastIndexOf('}')
     if (s >= 0 && e > s) {
-      try { parsed = JSON.parse(body.slice(s, e + 1)) } catch { parsed = salvageTruncatedUpdates(body) }
-    } else {
-      parsed = salvageTruncatedUpdates(body)
+      try { return JSON.parse(body.slice(s, e + 1)) } catch { return salvageTruncatedUpdates(body) }
     }
+    return salvageTruncatedUpdates(body)
   }
+}
+
+/** 从解析结果里取模板更新列表（兼容数组 / {updates:[]} / 裸 {variables:{}} 三种形态） */
+function toUpdateList(parsed: unknown): UiTemplateUpdate[] {
   if (Array.isArray(parsed)) return parsed as UiTemplateUpdate[]
   if (parsed && typeof parsed === 'object') {
     const p = parsed as { updates?: unknown[]; variables?: Record<string, unknown> }
@@ -275,6 +286,40 @@ export function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
     if (p.variables && typeof p.variables === 'object') return [{ variables: p.variables }]
   }
   return []
+}
+
+export function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
+  return toUpdateList(parsePayloadObject(raw))
+}
+
+/** UI 补全搭车返回的单个 NPC 好感评判（字段同 affinity.ts 的 NpcEvalResult） */
+export interface AuxAffinityItem {
+  npcName: string
+  interest?: number
+  annoyance?: number
+  attraction?: number
+  disgust?: number
+  trust?: number
+  cringe?: number
+  conflict?: number
+}
+
+/** UI 补全一次调用的解析结果：模板变量更新 + 出场 NPC 好感评判 */
+export interface AuxPayload {
+  updates: UiTemplateUpdate[]
+  affinity: AuxAffinityItem[]
+}
+
+/** 解析补全模型返回（{"updates":[...],"affinity":[...]}），两部分互不影响（一部分残缺不拖垮另一部分） */
+export function parseAuxPayload(raw: string): AuxPayload {
+  const parsed = parsePayloadObject(raw)
+  const updates = toUpdateList(parsed)
+  let affinity: AuxAffinityItem[] = []
+  if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { affinity?: unknown }).affinity)) {
+    affinity = ((parsed as { affinity: unknown[] }).affinity)
+      .filter((a) => a && typeof a === 'object' && String((a as AuxAffinityItem).npcName || '').trim()) as AuxAffinityItem[]
+  }
+  return { updates, affinity }
 }
 
 /** 从 AI 回复中提取全部 <ui_template_updates> 块并解析为更新列表（支持多个块） */

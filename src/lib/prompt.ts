@@ -11,7 +11,7 @@ import { applyRegexScripts, PLACEMENT_AI_OUTPUT, PLACEMENT_USER_INPUT } from './
 import { replaceMacros } from './macros'
 import { resolveWorldInfo, DEFAULT_WI_RECURSION_STEPS, type WorldInfoEntry } from './worldinfo'
 import type { UiTemplate } from './uitemplate'
-import { buildUiTemplateContextPrompt, buildUiTemplateUpdateInstruction } from './ui-template-state'
+import { buildUiTemplateContextPrompt } from './ui-template-state'
 import { builtinStateSyncRules, stripStateSyncBlocks, type StateSyncRule } from './state-sync'
 
 export interface ApiMessage {
@@ -251,12 +251,10 @@ export function buildPrompt(
     out.push({ role: 'system', content: `【本次回复需遵守的临时指令】\n${opts.pendingInstruction.trim()}` })
   }
 
-  // ── UI 模板变量更新指令（告诉 AI 在正文后输出 <ui_template_updates>）──
-  // 必须传会话实时状态：指令位于消息末尾，若用卡内静态初始值会诱导 AI 把已更新的变量改回去
-  if (opts.uiTemplates?.length) {
-    const instr = buildUiTemplateUpdateInstruction(opts.uiTemplates, opts.uiTemplateStates || {})
-    if (instr) out.push({ role: 'system', content: instr })
-  }
+  // ── UI 模板：主模型只写正文，不再要求输出 <ui_template_updates> 更新块 ──
+  // 方案 C（2026-09）：UI 变量更新 100% 交给每轮后台的轻量补全模型（runAuxTemplateAnalysis），
+  // 主模型只保留前面注入的「只读状态快照」用于保持剧情一致；这样可避免「正文 + 大 JSON」
+  // 撞 max_tokens 截断正文。主模型若自发输出更新块，finish() 仍会兜底解析，不做硬禁止。
 
   messages.push(...out)
   return messages

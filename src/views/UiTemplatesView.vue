@@ -11,6 +11,7 @@ import { useCharactersStore } from '../stores/characters'
 import { useSettingsStore } from '../stores/settings'
 import { buildHtmlDocument, normalizeUiTemplates, renderUiTemplateHtml, type UiTemplate } from '../lib/uitemplate'
 import { groupedModelOptions } from '../lib/api'
+import { pickLightModel } from '../lib/aux-model'
 import {
   builtinStateSyncRules, normalizeStateSyncRule, normalizeStateSyncRules,
   type StateSyncRule,
@@ -155,11 +156,34 @@ async function addRulePreset(kind: keyof typeof RULE_PRESETS) {
   await characters.put(card.value)
 }
 
-/** 副模型兜底分析：主模型没输出更新块时后台补一次（对齐旧版二次分析管线） */
+/** 面板状态更新器（原“副模型兜底”）：每轮后台刷新面板变量，并顺带评判出场 NPC 好感 */
 const auxModelValue = computed(() => settings.settings.uiTemplateAuxModel || null)
 function patchAuxModel(v: string | null) {
   void settings.patch({ uiTemplateAuxModel: v || '' })
 }
+
+/** 补全输出上限：未配置时的内置默认值（与 chat.ts runAuxTemplateAnalysis 兜底一致） */
+const AUX_MAX_TOKENS_DEFAULT = 3000
+const auxMaxTokensValue = computed(() => Number(settings.settings.uiAuxMaxTokens) || AUX_MAX_TOKENS_DEFAULT)
+function patchAuxMaxTokens(v: number) {
+  void settings.patch({ uiAuxMaxTokens: v >= 256 ? Math.floor(v) : AUX_MAX_TOKENS_DEFAULT })
+}
+
+/**
+ * 当前实际生效的补全模型与来源（不手动选择也能看到默认会用谁）：
+ * 手动指定 > 记忆副模型 > 自动挑选轻量 flash > 回退主模型。
+ */
+const effectiveAux = computed<{ model: string; via: string; tone: string }>(() => {
+  const manual = settings.settings.uiTemplateAuxModel
+  if (manual) return { model: manual, via: '手动指定', tone: 'var(--accent, #8b5cf6)' }
+  const mem = settings.settings.memoryAuxModel
+  if (mem) return { model: mem, via: '沿用记忆副模型', tone: 'var(--text-2)' }
+  const auto = pickLightModel(settings.modelsCache, settings.activeModel)
+  if (auto && auto !== settings.activeModel) {
+    return { model: auto, via: '自动轻量模型（推荐，无需选择）', tone: 'var(--accent, #8b5cf6)' }
+  }
+  return { model: auto || settings.activeModel || '（未选择主模型）', via: '回退主模型（思考模型可能改不全，建议手动选一个 flash）', tone: '#d97706' }
+})
 </script>
 
 <template>
@@ -269,10 +293,10 @@ function patchAuxModel(v: string | null) {
             </div>
           </div>
 
-          <!-- 副模型兜底分析 -->
+          <!-- 面板状态更新器：每轮后台刷新面板变量 + 顺带评判出场 NPC 好感 -->
           <div class="card-panel" style="padding: 12px; margin-top: 14px">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px">
-              <b style="font-size: 0.85rem; display: flex; align-items: center; gap: 6px"><Sparkles :size="14" /> 副模型兜底分析</b>
+              <b style="font-size: 0.85rem; display: flex; align-items: center; gap: 6px"><Sparkles :size="14" /> 面板状态更新器（每轮自动）</b>
               <NSwitch
                 size="small"
                 :value="settings.settings.uiTemplateAuxAnalysis !== false"
@@ -280,21 +304,41 @@ function patchAuxModel(v: string | null) {
               />
             </div>
             <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
-              主模型回复里没带变量更新块时（很多卡的自带格式太强，主模型顾不上输出），后台自动用副模型按最近楼层
-              补一次变量分析并刷新面板——对齐旧版的二次分析管线。关闭后面板只依赖主模型主动输出更新块。
-              <b>副模型仅在下方显式配置时才运行（不会默认占用主模型）</b>；对话页底部会显示每次变量更新的状态。
+              主模型只负责写正文；每轮回复后，后台用一个快而便宜的轻量模型，依据最近剧情刷新面板变量（场景/遭遇/选项/在场NPC/状态），
+              <b>同一次调用还会顺带评判出场 NPC 的好感度并写入好感档案</b>，不额外增加请求。不手动选模型时会自动挑选非思考 flash；
+              对话页底部会显示每次「补全 N 项，好感更新 M 人」的状态。
             </p>
-            <div class="field" style="margin-bottom: 0">
-              <label>分析用副模型（未选择 = 用记忆系统副模型；两者都未配置则不兜底）</label>
+
+            <!-- 当前实际生效设置：不选择也能看到默认值 -->
+            <div class="aux-effective">
+              <span class="aux-effective-label">当前生效模型</span>
+              <span class="aux-effective-model">{{ effectiveAux.model }}</span>
+              <span class="aux-effective-via" :style="{ color: effectiveAux.tone }">{{ effectiveAux.via }}</span>
+            </div>
+
+            <div class="field" style="margin-bottom: 10px">
+              <label>手动指定更新模型（留空 = 按上面的默认自动选择）</label>
               <NSelect
                 size="small"
                 filterable
                 tag
                 clearable
                 :value="auxModelValue"
-                placeholder="选一个快而便宜的模型（未配置则不兜底）"
+                placeholder="留空即自动挑选轻量 flash（推荐）"
                 :options="groupedModelOptions(settings.modelsCache, 'text')"
                 @update:value="patchAuxModel"
+              />
+            </div>
+
+            <div class="field" style="margin-bottom: 0; max-width: 260px">
+              <label>补全输出上限 tokens（留空/小于 256 用默认 {{ AUX_MAX_TOKENS_DEFAULT }}）</label>
+              <input
+                class="input"
+                type="number"
+                min="256"
+                step="128"
+                :value="auxMaxTokensValue"
+                @change="patchAuxMaxTokens(Number(($event.target as HTMLInputElement).value))"
               />
             </div>
           </div>
@@ -314,6 +358,16 @@ function patchAuxModel(v: string | null) {
 
 <style scoped>
 .tpl-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.aux-effective {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 10px; margin-bottom: 10px;
+  border-radius: 9px; border: 1px dashed var(--line);
+  background: color-mix(in srgb, var(--accent, #8b5cf6) 7%, transparent);
+  font-size: 0.76rem;
+}
+.aux-effective-label { color: var(--text-2); }
+.aux-effective-model { font-weight: 600; font-family: ui-monospace, monospace; }
+.aux-effective-via { color: var(--text-2); }
 .tpl-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 13px;

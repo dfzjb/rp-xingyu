@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   AFFINITY_AXES,
   affinityLineFor,
@@ -7,8 +7,11 @@ import {
   defaultNpcAffinity,
   deriveConflict,
   deriveStage,
+  listNpcAffinities,
+  mergeNpcEvalResults,
   normalizeAffinity,
 } from '../src/lib/affinity'
+import { db } from '../src/db'
 import type { NpcAffinity } from '../src/types'
 
 function mk(partial: Partial<NpcAffinity>): NpcAffinity {
@@ -142,5 +145,36 @@ describe('affinityLineFor 状态行', () => {
     expect(line).toContain('信任50')
     expect(line).toContain('反感80')
     expect(line).toContain('冲突：Lv.')
+  })
+})
+
+describe('mergeNpcEvalResults（UI 补全搭车落库，口径同独立评判）', () => {
+  beforeEach(async () => { await db.affinity.clear() })
+
+  it('新名字自动建档，直接采用本次评分', async () => {
+    const out = await mergeNpcEvalResults('s1', [
+      { npcName: '陆晴', interest: 70, trust: 60, attraction: 50, annoyance: 0, cringe: 0, disgust: 0, conflict: 0 },
+    ])
+    expect(out).toHaveLength(1)
+    const rows = await listNpcAffinities('s1')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].npcName).toBe('陆晴')
+    expect(rows[0].interest).toBe(70)
+    expect(rows[0].conflictOverride).toBe(0)
+  })
+
+  it('已有档案按 新60%/旧40% 平滑，避免跳变', async () => {
+    await db.affinity.put({ ...defaultNpcAffinity('s1', '陆晴'), interest: 50 })
+    const out = await mergeNpcEvalResults('s1', [
+      { npcName: '陆晴', interest: 80, trust: 8, attraction: 5, annoyance: 0, cringe: 0, disgust: 0 },
+    ])
+    // 50*0.4 + 80*0.6 = 68
+    expect(out[0].interest).toBe(68)
+  })
+
+  it('空名项被跳过；空数组不报错', async () => {
+    const out = await mergeNpcEvalResults('s1', [{ npcName: '   ' } as never])
+    expect(out).toHaveLength(0)
+    expect(await listNpcAffinities('s1')).toHaveLength(0)
   })
 })

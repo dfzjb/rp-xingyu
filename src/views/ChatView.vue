@@ -135,7 +135,7 @@ function onKeydown(e: KeyboardEvent) {
 /** 输入栏「补全」：UI 面板变量兜底补全的输出上限（token），非法/过小回退默认 2000 */
 function setAuxTokens(e: Event) {
   const v = Number((e.target as HTMLInputElement).value)
-  void settings.patch({ uiAuxMaxTokens: v >= 256 ? Math.floor(v) : 2000 })
+  void settings.patch({ uiAuxMaxTokens: v >= 256 ? Math.floor(v) : 3000 })
 }
 
 /**

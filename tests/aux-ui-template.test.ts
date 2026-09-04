@@ -4,6 +4,7 @@ import {
   buildAuxAnalysisMessages,
   buildUiTemplateUpdateInstruction,
   parseUpdatesPayload,
+  parseAuxPayload,
 } from '../src/lib/ui-template-state'
 import { normalizeUiTemplate, type UiTemplate } from '../src/lib/uitemplate'
 
@@ -109,5 +110,51 @@ describe('parseUpdatesPayload 截断 JSON 抢救', () => {
   })
   it('彻底无法解析时返回空数组而非抛错', () => {
     expect(parseUpdatesPayload('完全不是JSON的一段解释文字')).toEqual([])
+  })
+})
+
+describe('补全一次调用同时产出变量更新与 NPC 好感（方案C）', () => {
+  it('补全指令携带 affinity 格式与已有 NPC 名册', () => {
+    const tpl = makeTpl(VARS)
+    const msgs = buildAuxAnalysisMessages(
+      [tpl], {},
+      [{ role: 'assistant', name: 'AI', content: '陆晴抱着你' }],
+      [{ npcName: '陆晴', score: 62, stage: '亲密' }],
+    )
+    const sys = msgs[0].content
+    expect(sys).toContain('affinity')
+    expect(sys).toContain('interest')
+    expect(sys).toContain('conflict')
+    expect(sys).toContain('陆晴（综合62·亲密）')
+    // 不传已有名册也不报错（第 4 参数可选，向后兼容）
+    expect(buildAuxAnalysisMessages([tpl], {}, [{ role: 'user', name: '我', content: 'x' }])).toHaveLength(2)
+  })
+
+  it('parseAuxPayload 同时解析 updates 与 affinity', () => {
+    const raw = JSON.stringify({
+      updates: [{ id: 't1', variables: { env_location: '卧室', npc1_name: '陆晴' } }],
+      affinity: [{ npcName: '陆晴', interest: 70, trust: 80, attraction: 60, conflict: 0 }],
+    })
+    const p = parseAuxPayload(raw)
+    expect(p.updates).toHaveLength(1)
+    expect(p.updates[0].variables?.npc1_name).toBe('陆晴')
+    expect(p.affinity).toHaveLength(1)
+    expect(p.affinity[0].npcName).toBe('陆晴')
+    expect(p.affinity[0].trust).toBe(80)
+  })
+
+  it('只有 updates、缺 affinity 时 affinity 为空数组且不影响 updates', () => {
+    const p = parseAuxPayload('{"updates":[{"id":"t1","variables":{"a":1}}]}')
+    expect(p.updates).toHaveLength(1)
+    expect(p.affinity).toEqual([])
+  })
+
+  it('affinity 中缺 npcName 的脏数据被过滤', () => {
+    const p = parseAuxPayload(JSON.stringify({
+      updates: [],
+      affinity: [{ interest: 1 }, { npcName: '陆晴', trust: 50 }],
+    }))
+    expect(p.affinity).toHaveLength(1)
+    expect(p.affinity[0].npcName).toBe('陆晴')
   })
 })
