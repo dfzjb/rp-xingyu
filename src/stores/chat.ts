@@ -12,7 +12,8 @@ import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
 import { normalizeUiTemplates } from '../lib/uitemplate'
 import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseUpdatesPayload } from '../lib/ui-template-state'
-import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks, hasUnclosedSyncBlock } from '../lib/state-sync'
+import { pickLightModel } from '../lib/aux-model'
+import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks } from '../lib/state-sync'
 import { useCharactersStore } from './characters'
 import { usePersonasStore } from './personas'
 import { useSettingsStore } from './settings'
@@ -307,17 +308,22 @@ export const useChatStore = defineStore('chat', () => {
     const settings = useSettingsStore()
     if (settings.settings.uiTemplateAuxAnalysis === false) return
     if (auxAnalysisRunning.has(s.id)) return
-    // 副模型优先；未配置副模型时回退主模型当前槽位做一次轻量补全（max_tokens 收紧到 900，
-    // 避免「主模型更新块被 max_tokens 截断 / 未输出块」时 UI 完全跟不上剧情）
-    const auxModel = settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel
-    const fallbackMain = !auxModel
+    // 补全模型优先级：用户显式指定的 UI 补全模型 > 记忆补全模型 > 自动挑选轻量非思考
+    // flash 模型 > 主模型。结构化字段提取若用深度思考模型，其思考 token 会吃光 max_tokens
+    // 预算，导致零输出(finish=length)或只改少数字段、漏掉场景/选项（2026-09 实测）。
+    const explicitAux = settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel
+    const auxModel = explicitAux || pickLightModel(settings.modelsCache, settings.activeModel)
+    // 0=显式副模型 1=自动轻量模型 2=回退主模型（仅用于状态提示文案）
+    const auxKind = explicitAux ? 0 : auxModel && auxModel !== settings.activeModel ? 1 : 2
     const cfg: ApiConfig = {
       baseUrl: settings.settings.apiBaseUrl,
       apiKey: settings.settings.apiKey,
       model: auxModel || settings.activeModel,
       temperature: 0.3,
-      maxTokens: Number(settings.settings.uiAuxMaxTokens) || 2000,
-      reasoningEffort: 'minimal',
+      maxTokens: Number(settings.settings.uiAuxMaxTokens) || 2500,
+      // 自动挑选的非思考模型不下发 reasoning_effort（不思考，也避免个别网关对该参数报错）；
+      // 显式配置或回退主模型时用最小思考档（api 出口会把 minimal 兼容映射为 low）
+      reasoningEffort: auxKind === 1 ? 'none' : 'minimal',
     }
     if (!cfg.apiKey) return
     if (!cfg.model) {
@@ -351,7 +357,7 @@ export const useChatStore = defineStore('chat', () => {
       s.uiTemplateStates = result.states
       // 同步刷新本节点快照，保证分支回滚语义一致
       node.extra = { ...(node.extra || {}), uiTplState: result.states }
-      setUiTplStatus('ok', `面板变量：${fallbackMain ? '主模型补全' : '副模型更新'} ${result.changedCount} 项`)
+      setUiTplStatus('ok', `面板变量：${auxKind === 0 ? '副模型' : auxKind === 1 ? '轻量模型' : '主模型'}补全 ${result.changedCount} 项`)
       await persist(s)
     } catch (err) {
       setUiTplStatus('error', `面板变量：副模型分析失败（${(err as Error)?.message || '未知错误'}）`)
@@ -482,13 +488,9 @@ export const useChatStore = defineStore('chat', () => {
       const truncated = finishReason === 'length'
 
       // 解析 AI 回复中的变量更新指令（规则化：内置方言 + 卡级规则）并更新会话状态
-      let mainUpdateCount = 0
       let effective = uiStates
-      // 是否残留「开标签已写、闭合标签缺失」的残缺更新块（截断的典型表现）
-      const unclosed = uiTpls.length ? hasUnclosedSyncBlock(node.content, syncRules) : false
       if (uiTpls.length) {
         const updates = extractStateSyncUpdates(node.content, syncRules)
-        mainUpdateCount = updates.length
         if (updates.length) {
           const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
           effective = result.states
@@ -511,8 +513,9 @@ export const useChatStore = defineStore('chat', () => {
           ? '（模型输出达到 max_tokens 上限被截断：思考类模型的思考 token 也占用该上限，请在生成设置里调大 max_tokens（建议 ≥4096）后重 roll。）'
           : '（模型本次没有输出正文：可能只输出了面板变量更新、内容被安全过滤，或 max_tokens 不足。可重 roll 或换模型试试。）'
       }
-      // 主模型没输出可用更新块（含块被截断）→ 兜底分析：配了副模型用副模型，否则用主模型轻量补全
-      if (uiTpls.length && (mainUpdateCount === 0 || unclosed)) {
+      // 每轮都让轻量补全兜底一次（开关在 runAuxTemplateAnalysis 内判定）：
+      // 主模型可能只改部分字段或更新块被 max_tokens 截断，补全结果与主模型更新做并集深合并
+      if (uiTpls.length && settings.settings.uiTemplateAuxAnalysis !== false) {
         void runAuxTemplateAnalysis(s, node, path, uiTpls, effective)
       }
 
@@ -722,11 +725,9 @@ export const useChatStore = defineStore('chat', () => {
         generating.value = false
         abortFn = null
         // 解析变量更新指令（规则化）+ 快照回滚点
-        let mainUpdateCount = 0
         let effective = uiStates
         if (uiTpls.length) {
           const updates = extractStateSyncUpdates(lastAi.content, syncRules)
-          mainUpdateCount = updates.length
           if (updates.length) {
             const result = applyUiTemplateUpdates(uiStates, uiTpls, updates)
             effective = result.states
@@ -734,10 +735,9 @@ export const useChatStore = defineStore('chat', () => {
           }
           lastAi.extra = { ...(lastAi.extra || {}), uiTplState: effective }
         }
-        const unclosedCont = uiTpls.length ? hasUnclosedSyncBlock(lastAi.content, syncRules) : false
         lastAi.content = stripStateSyncBlocks(lastAi.content, syncRules)
-        // 主模型没输出更新块（含块被 max_tokens 截断）→ 兜底分析（副模型优先，否则主模型轻量补全）
-        if (uiTpls.length && (mainUpdateCount === 0 || unclosedCont)) {
+        // 每轮轻量补全兜底（与主模型更新并集合并；开关在 runAuxTemplateAnalysis 内判定）
+        if (uiTpls.length && settings.settings.uiTemplateAuxAnalysis !== false) {
           void runAuxTemplateAnalysis(s, lastAi, chain, uiTpls, effective)
         }
         // 用量统计：续写无新用户输入，发送口径计 0

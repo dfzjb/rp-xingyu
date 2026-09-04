@@ -77,6 +77,39 @@ function fallbackVars(t: UiTemplate): Record<string, unknown> {
 }
 
 /**
+ * 从模板变量名里启发式挑出「描述当前这一幕、每幕都应随剧情重写」的字段并按组列名，
+ * 命令式提醒模型逐项核对——否则模型会把场景/遭遇/选项/在场人物误当静态资料而漏改
+ * （实测：不点名时补全模型只改最直白的环境/心情，整组 choice_*、npc 槽位保持旧值）。
+ * 只列字段名（当前值在全量 currentVariables 里），控制提示长度、减轻思考模型负担。
+ */
+const SCENE_REFRESH_GROUPS: { label: string; re: RegExp }[] = [
+  { label: '场景/时间/环境/位置', re: /^(env|scene|location|place|weather|time|date|weekday|season|temp)/i },
+  { label: '当前遭遇与可选行动(选项)', re: /(choice|option|encounter|action|select|summary)/i },
+  { label: '在场角色/NPC槽位(npc1=当前最主要互动对象)', re: /npc|^(character|actor|companion)\d/i },
+  { label: '玩家当下状态(心情/体力/压力/健康/欲望/资金/穿着)', re: /(hp|health|stress|energy|stamina|mood|lust|libido|money|cash|condition|inner|clothing|outfit|emotion)/i },
+]
+
+function buildSceneRefreshHint(templates: { currentVariables: Record<string, unknown> }[]): string {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const g of SCENE_REFRESH_GROUPS) {
+    const hit = new Set<string>()
+    for (const t of templates) {
+      for (const k of Object.keys(t.currentVariables || {})) if (g.re.test(k)) hit.add(k)
+    }
+    const list = [...hit].filter((k) => !seen.has(k))
+    list.forEach((k) => seen.add(k))
+    if (list.length) lines.push(`  · ${g.label}：${list.join(', ')}`)
+  }
+  if (!lines.length) return ''
+  return [
+    '【每幕必刷新】下列字段描述“当前这一幕”，不是静态资料；只要剧情推进、换地点、换在场人物或进入新情境，就必须按最近对话重写，不得沿用旧值：',
+    ...lines,
+    '  “遭遇/选项”类：用一句话概括当前处境，并给出当前场景下玩家真正可采取的数个不同行动；NPC 槽位按当前实际在场、与玩家互动的角色重排，最主要互动对象放 npc1，不在场的旧角色后移或清空。',
+  ].join('\n')
+}
+
+/**
  * 构建注入到 system 提示词末尾的模板状态上下文。
  * 让 AI 知道当前模板变量的值，从而能判断如何更新。
  */
@@ -140,9 +173,10 @@ export function buildUiTemplateUpdateInstruction(
     `${OPEN}{"updates":[]}${CLOSE}`,
     '只更新下方模板已定义的变量；不要修改HTML；不要编造无关字段。',
     '变量值可以是文字、数字、对象或数组；数组字段可返回完整数组，也可用 "items.0.name" 这种路径更新单项。',
+    buildSceneRefreshHint(payload.map((p) => ({ currentVariables: p.currentVariables }))),
     '模板变量如下：',
     JSON.stringify(payload, null, 2),
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 /**
@@ -167,15 +201,16 @@ export function buildAuxAnalysisMessages(
 
   const system = [
     '你是旧版的UI变量更新器。根据用户消息里提供的最近对话，更新UI模板中受剧情影响的变量。',
-    '只返回JSON，不要解释，不要输出Markdown。',
+    '只返回JSON，不要解释，不要输出Markdown，不要展开思考过程。',
     '返回格式固定为 {"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}]}。',
     'variables 只包含有变化的路径；值可以是文字、数字、对象或JSON数组。',
     '装备栏、背包、动态、聊天记录这类列表字段可直接返回完整数组，也可用 "feed.0.text" 这种路径更新单项。',
     '没有变化则返回 {"updates":[]}。不要修改HTML，不要编造模板未定义的字段，变量路径必须与当前变量完全一致。',
+    buildSceneRefreshHint(payload.map((p) => ({ currentVariables: p.currentVariables }))),
     '',
     '模板与当前变量如下：',
     JSON.stringify(payload, null, 2),
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 
   const user = recentFloors
     .map((f) => `[${f.role === 'user' ? f.name || '用户' : f.name || 'AI'}]：${f.content}`)

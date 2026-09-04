@@ -1,0 +1,83 @@
+import { describe, expect, it } from 'vitest'
+import { pickLightModel } from '../src/lib/aux-model'
+import {
+  buildAuxAnalysisMessages,
+  buildUiTemplateUpdateInstruction,
+} from '../src/lib/ui-template-state'
+import { normalizeUiTemplate, type UiTemplate } from '../src/lib/uitemplate'
+
+function makeTpl(vars: Record<string, unknown>): UiTemplate {
+  return normalizeUiTemplate({
+    id: 't1',
+    name: '状态面板',
+    enabled: true,
+    htmlTemplate: '<div>{{env_location}} {{choice_summary}}</div>',
+    initialVariableState: vars,
+  })
+}
+
+const VARS = {
+  p_name: '林晓雨',
+  p_appearance_full: '粉长发', // 静态资料，不应进必刷新清单
+  env_location: '星巴克',
+  env_time: '14:23',
+  choice_summary: '你在星巴克遇到林雨薇',
+  choice_a_label: '打招呼',
+  npc1_name: '林雨薇',
+  npc1_relation: '朋友',
+  p_mood_text: '焦虑',
+}
+
+describe('pickLightModel 后台补全模型选择', () => {
+  it('列表为空时回退主模型', () => {
+    expect(pickLightModel([], 'deepseek-v4-pro')).toBe('deepseek-v4-pro')
+    expect(pickLightModel(undefined, 'x')).toBe('x')
+  })
+  it('优先选 deepseek flash-fast，其次 flash', () => {
+    const list = ['deepseek-v4-pro', 'deepseek-v4-flash', 'gemini-3.8-flash']
+    expect(pickLightModel(list, 'deepseek-v4-pro')).toBe('deepseek-v4-flash')
+    expect(pickLightModel(['deepseek-v4-flash-fast', 'deepseek-v4-flash'], 'pro')).toBe('deepseek-v4-flash-fast')
+  })
+  it('排除 thinking/opus 等重型思考模型', () => {
+    const list = ['[AN]gemini-3.8-flash-thinking', '[AN]claude-opus-4-6', 'gemini-3.8-flash']
+    expect(pickLightModel(list, 'deepseek-v4-pro')).toBe('gemini-3.8-flash')
+  })
+  it('只有重型模型时回退主模型', () => {
+    expect(pickLightModel(['[AN]claude-opus-4-6', 'gemini-3.1-pro-thinking'], 'deepseek-v4-pro')).toBe('deepseek-v4-pro')
+  })
+})
+
+describe('补全/主模型指令的「每幕必刷新」提示', () => {
+  it('补全消息点名场景/选项/在场角色字段，且不把静态资料列入', () => {
+    const tpl = makeTpl(VARS)
+    const msgs = buildAuxAnalysisMessages([tpl], {}, [
+      { role: 'user', name: '我', content: '深夜在卧室' },
+      { role: 'assistant', name: 'AI', content: '陆晴抱着你' },
+    ])
+    const sys = msgs[0].content
+    expect(sys).toContain('每幕必刷新')
+    expect(sys).toContain('choice_summary')
+    expect(sys).toContain('choice_a_label')
+    expect(sys).toContain('env_location')
+    expect(sys).toContain('npc1_name')
+    // 静态外貌/姓名不属于每幕必刷新字段
+    const refreshBlock = sys.slice(sys.indexOf('每幕必刷新'), sys.indexOf('模板与当前变量'))
+    expect(refreshBlock).not.toContain('p_appearance_full')
+    // 当前变量全量仍在（保证路径准确）
+    expect(sys).toContain('林雨薇')
+  })
+
+  it('主模型更新指令同样携带必刷新提示', () => {
+    const tpl = makeTpl(VARS)
+    const instr = buildUiTemplateUpdateInstruction([tpl], {})
+    expect(instr).toContain('每幕必刷新')
+    expect(instr).toContain('choice_summary')
+  })
+
+  it('没有任何动态字段时不硬塞提示（返回指令仍可用）', () => {
+    const tpl = makeTpl({ p_name: 'A', p_appearance_full: 'B' })
+    const instr = buildUiTemplateUpdateInstruction([tpl], {})
+    expect(instr).not.toContain('每幕必刷新')
+    expect(instr).toContain('ui_template_updates')
+  })
+})

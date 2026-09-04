@@ -87,8 +87,9 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryKeepFloors: 32,
   uiTemplateAuxAnalysis: true,
   uiTemplateAuxModel: '',
-  // 面板兜底补全的输出上限：思考模型补全时思考 token 也占预算（实测 deepseek 思考约 885），默认 2000
-  uiAuxMaxTokens: 2000,
+  // 面板兜底补全的输出上限：默认自动改用 flash 非思考模型（无思考 token 占用），
+  // 实测大面板一次改 60~80 字段约 1500 token，默认 2500 留足余量
+  uiAuxMaxTokens: 2500,
   promptEntries: [],
 }
 
