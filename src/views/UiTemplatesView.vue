@@ -156,7 +156,7 @@ async function addRulePreset(kind: keyof typeof RULE_PRESETS) {
   await characters.put(card.value)
 }
 
-/** 面板状态更新器（原“副模型兜底”）：每轮后台刷新面板变量，并顺带评判出场 NPC 好感 */
+/** 面板状态补全器（主模型同步更新之外的第二保险）：每轮后台补齐漏掉的面板变量，并顺带评判出场 NPC 好感 */
 const auxModelValue = computed(() => settings.settings.uiTemplateAuxModel || null)
 function patchAuxModel(v: string | null) {
   void settings.patch({ uiTemplateAuxModel: v || '' })
@@ -304,9 +304,9 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
               />
             </div>
             <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
-              主模型只负责写正文；每轮回复后，后台用一个快而便宜的轻量模型，依据最近剧情刷新面板变量（场景/遭遇/选项/在场NPC/状态），
-              <b>同一次调用还会顺带评判出场 NPC 的好感度并写入好感档案</b>，不额外增加请求。不手动选模型时会自动挑选非思考 flash；
-              对话页底部会显示每次「补全 N 项，好感更新 M 人」的状态。
+              面板更新采用「双保险」：<b>主模型在写正文的同一次回复里同步更新面板变量</b>（第一主力，不依赖额外请求，更新块放在正文最前，即使正文被 max_tokens 截断也不影响面板）；
+              每轮回复后再用下面的轻量模型<b>补齐主模型漏掉的字段，并同一次调用顺带评判出场 NPC 好感度</b>。不手动选模型时会自动挑选非思考 flash；
+              对话页底部会显示每次「主模型更新 N 项 / 补全 N 项，好感更新 M 人」的状态。
             </p>
 
             <!-- 当前实际生效设置：不选择也能看到默认值 -->

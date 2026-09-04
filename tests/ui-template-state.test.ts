@@ -113,6 +113,16 @@ describe('提示词构建', () => {
     // 未传状态时回退到静态初始值
     expect(buildUiTemplateUpdateInstruction([t])).toContain('"hp": 1')
   })
+
+  it('默认 position=before：要求先输出更新块再写正文（免疫正文 max_tokens 截断）；after 可切回旧版后置语义', () => {
+    const t = tpl('t1', '面板', { hp: 1 })
+    const before = buildUiTemplateUpdateInstruction([t], {})
+    expect(before).toContain('最开头')
+    expect(before).toContain('先完整输出更新块')
+    const after = buildUiTemplateUpdateInstruction([t], {}, 'after')
+    expect(after).toContain('全部正文结束之后')
+    expect(after).not.toContain('最开头')
+  })
 })
 
 describe('update 对象健壮性', () => {

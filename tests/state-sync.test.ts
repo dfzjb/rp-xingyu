@@ -130,6 +130,21 @@ describe('残缺更新块（输出被 max_tokens 截断）', () => {
     expect(hasUnclosedSyncBlock('正文<ui_template_updates>{"updates":[]}</ui_template_updates>', builtins)).toBe(false)
     expect(hasUnclosedSyncBlock('纯正文', builtins)).toBe(false)
   })
+
+  it('前置更新块被 max_tokens 截断时，extract 抢救已完整写出的字段（块在正文前、正文尚未开始）', () => {
+    // 模型先输出更新块，第三个字段写一半就 finish=length，闭合标签与正文都还没来得及输出
+    const text = '<ui_template_updates>\n{"updates":[{"id":"t1","variables":{"time":"22:30","weather":"晴","scene":"卧'
+    const ups = extractStateSyncUpdates(text, builtins)
+    expect(ups).toHaveLength(1)
+    expect(ups[0].id).toBe('t1')
+    expect(ups[0].variables).toMatchObject({ time: '22:30', weather: '晴' })
+  })
+
+  it('已有完整闭合块时，残缺抢救不重复解析同一份', () => {
+    const text = '<ui_template_updates>{"updates":[{"id":"t1","variables":{"hp":10}}]}</ui_template_updates>'
+    const ups = extractStateSyncUpdates(text, builtins)
+    expect(ups).toEqual([{ id: 't1', variables: { hp: 10 } }])
+  })
 })
 
 describe('normalizeStateSyncRule', () => {

@@ -11,7 +11,7 @@ import { applyRegexScripts, PLACEMENT_AI_OUTPUT, PLACEMENT_USER_INPUT } from './
 import { replaceMacros } from './macros'
 import { resolveWorldInfo, DEFAULT_WI_RECURSION_STEPS, type WorldInfoEntry } from './worldinfo'
 import type { UiTemplate } from './uitemplate'
-import { buildUiTemplateContextPrompt } from './ui-template-state'
+import { buildUiTemplateContextPrompt, buildUiTemplateUpdateInstruction } from './ui-template-state'
 import { builtinStateSyncRules, stripStateSyncBlocks, type StateSyncRule } from './state-sync'
 
 export interface ApiMessage {
@@ -251,10 +251,17 @@ export function buildPrompt(
     out.push({ role: 'system', content: `【本次回复需遵守的临时指令】\n${opts.pendingInstruction.trim()}` })
   }
 
-  // ── UI 模板：主模型只写正文，不再要求输出 <ui_template_updates> 更新块 ──
-  // 方案 C（2026-09）：UI 变量更新 100% 交给每轮后台的轻量补全模型（runAuxTemplateAnalysis），
-  // 主模型只保留前面注入的「只读状态快照」用于保持剧情一致；这样可避免「正文 + 大 JSON」
-  // 撞 max_tokens 截断正文。主模型若自发输出更新块，finish() 仍会兜底解析，不做硬禁止。
+  // ── UI 模板：主模型在正文「之前」同步输出变量更新块（面板更新的第一主力）──
+  // 2026-09-04 根因修正（推翻方案 C）：方案 C 摘除主模型更新、把面板 100% 押在「主模型结束后
+  // 再发第二次后台补全请求」上；但线上日志证实主模型常撞 max_tokens(finish=length) 或长生成被
+  // 刷新/中断，后置补全根本来不及发出（用户两轮只有主请求、没有补全请求），面板永不更新。
+  // 现对齐旧版 uiTemplateMainModelAnalysis 默认语义：主模型在「同一次流式响应」里同步给出更新块，
+  // 不依赖第二次请求、不依赖页面在主流结束后仍存活；块前置（先块后正文）可免疫正文被 max_tokens 截断。
+  // 后台 runAuxTemplateAnalysis 保留，降级为「补齐主模型漏掉的字段 + 搭车好感评判」的兜底。
+  if (opts.uiTemplates?.length) {
+    const uiInstr = buildUiTemplateUpdateInstruction(opts.uiTemplates, opts.uiTemplateStates || {}, 'before')
+    if (uiInstr) out.push({ role: 'system', content: uiInstr })
+  }
 
   messages.push(...out)
   return messages

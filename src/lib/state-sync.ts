@@ -178,6 +178,8 @@ function compileRule(rule: StateSyncRule): RegExp | null {
 export function extractStateSyncUpdates(text: string, rules: StateSyncRule[]): UiTemplateUpdate[] {
   const src = String(text || '')
   const out: UiTemplateUpdate[] = []
+  // 记录已被「完整闭合块」消费掉的文本，残缺开块抢救时只在其剩余部分里找，避免同一字段解析两次
+  let residual = src
   for (const rule of rules) {
     if (rule.disabled) continue
     const re = compileRule(rule)
@@ -194,6 +196,33 @@ export function extractStateSyncUpdates(text: string, rules: StateSyncRule[]): U
         out.push(...parseJsonBlockPayload(m[1], rule).map((u) => (rule.template && !u.id && !u.name ? { ...u, ...resolveTemplateTarget(rule.template) } : u)))
       }
       if (m.index === re.lastIndex) re.lastIndex++
+    }
+    // 从残料中剔除已完整闭合的块，剩下的才可能是「只写了开标签」的残缺块
+    re.lastIndex = 0
+    residual = residual.replace(re, '')
+  }
+
+  // 残缺开块抢救：输出被 max_tokens 截断、开标签后没有闭合标签（更新块前置时尤为常见：
+  // 块在正文最前，块 JSON 没写完就 finish=length）。把已完整写出的部分交给解析器，
+  // parsePayloadObject 内部会做截断 JSON 抢救，能救回几个字段算几个。
+  for (const rule of rules) {
+    if (rule.disabled || !rule.openPattern || rule.dialect === 'macro_setvar') continue
+    let openRe: RegExp | null = null
+    try {
+      openRe = new RegExp(rule.openPattern, rule.flags?.includes('i') ? 'i' : '')
+    } catch {
+      openRe = null
+    }
+    if (!openRe) continue
+    const m = openRe.exec(residual)
+    if (!m) continue
+    const seg = m[0]
+    const gt = seg.indexOf('>')
+    const payload = gt >= 0 ? seg.slice(gt + 1) : seg
+    if (rule.dialect === 'legacy_json') {
+      out.push(...parseUpdatesPayload(payload))
+    } else {
+      out.push(...parseJsonBlockPayload(payload, rule).map((u) => (rule.template && !u.id && !u.name ? { ...u, ...resolveTemplateTarget(rule.template) } : u)))
     }
   }
   return out

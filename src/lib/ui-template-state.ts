@@ -144,13 +144,20 @@ export function buildUiTemplateContextPrompt(
 
 /**
  * 构建追加到 system 提示词的"输出变量更新块"指令。
- * 告诉 AI 在正文后输出 <ui_template_updates>{"updates":[...]}</ui_template_updates>。
+ * 告诉 AI 输出 <ui_template_updates>{"updates":[...]}</ui_template_updates>。
  * states：会话级实时变量状态 —— 必须传入，否则 AI 看到的是卡内静态初始值，
  * 会与 <ui_template_state_context> 里的实时快照互相矛盾。
+ *
+ * position（默认 'before'，对齐 2026-09-04 线上根因修正）：
+ *   - 'before'：要求模型把更新块放在回复「最开头、正文之前」。这样即使正文很长撞上
+ *     max_tokens 被截断（线上实测主模型 completion 正好卡在 4096），更新块也已完整流出，
+ *     面板仍能更新；流式期间该块由渲染层 stripStateSyncBlocks 实时隐藏，用户看不到 JSON。
+ *   - 'after'：旧版原始语义，正文结束后追加（正文被截断时块会一起丢，仅在 max_tokens 充裕时可靠）。
  */
 export function buildUiTemplateUpdateInstruction(
   templates: UiTemplate[],
   states: UiTemplateStateMap = {},
+  position: 'before' | 'after' = 'before',
 ): string {
   const enabled = templates.filter((t) => t.enabled && t.htmlTemplate)
   if (!enabled.length) return ''
@@ -162,14 +169,18 @@ export function buildUiTemplateUpdateInstruction(
     variableSchema: t.variableSchema || '',
   }))
 
+  const placeLine = position === 'before'
+    ? '位置（强制）：把更新块放在本次回复的「最开头」，先完整输出更新块、闭合标签之后再开始写正文；严禁先写正文再补块。'
+    : '位置（强制）：先写完整段正文，在全部正文结束之后再追加更新块。'
   return [
     '[UI模板变量更新]',
-    '你需要在正文结束后追加一个隐藏变量更新块。这个块只给前端读取，不属于正文，不要在正文中提到它。',
+    '本次回复必须携带一个隐藏变量更新块。这个块只给前端读取，不属于正文，不要在正文里提到或复述它。',
+    placeLine,
     '格式必须严格如下：',
     OPEN,
     '{"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}]}',
     CLOSE,
-    '没有变量变化也必须输出：',
+    '没有变量变化也必须输出空块：',
     `${OPEN}{"updates":[]}${CLOSE}`,
     '只更新下方模板已定义的变量；不要修改HTML；不要编造无关字段；只输出本次发生变化的字段，严禁把整份变量原样回写（会超长被截断）。',
     '变量值可以是文字、数字、对象或数组；数组字段可返回完整数组，也可用 "items.0.name" 这种路径更新单项。',
