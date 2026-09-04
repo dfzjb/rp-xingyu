@@ -3,6 +3,7 @@ import { pickLightModel } from '../src/lib/aux-model'
 import {
   buildAuxAnalysisMessages,
   buildUiTemplateUpdateInstruction,
+  parseUpdatesPayload,
 } from '../src/lib/ui-template-state'
 import { normalizeUiTemplate, type UiTemplate } from '../src/lib/uitemplate'
 
@@ -33,10 +34,10 @@ describe('pickLightModel 后台补全模型选择', () => {
     expect(pickLightModel([], 'deepseek-v4-pro')).toBe('deepseek-v4-pro')
     expect(pickLightModel(undefined, 'x')).toBe('x')
   })
-  it('优先选 deepseek flash-fast，其次 flash', () => {
+  it('优先选 deepseek flash（非 fast 精确版）', () => {
     const list = ['deepseek-v4-pro', 'deepseek-v4-flash', 'gemini-3.8-flash']
     expect(pickLightModel(list, 'deepseek-v4-pro')).toBe('deepseek-v4-flash')
-    expect(pickLightModel(['deepseek-v4-flash-fast', 'deepseek-v4-flash'], 'pro')).toBe('deepseek-v4-flash-fast')
+    expect(pickLightModel(['deepseek-v4-flash-fast', 'deepseek-v4-flash'], 'pro')).toBe('deepseek-v4-flash')
   })
   it('排除 thinking/opus 等重型思考模型', () => {
     const list = ['[AN]gemini-3.8-flash-thinking', '[AN]claude-opus-4-6', 'gemini-3.8-flash']
@@ -44,6 +45,15 @@ describe('pickLightModel 后台补全模型选择', () => {
   })
   it('只有重型模型时回退主模型', () => {
     expect(pickLightModel(['[AN]claude-opus-4-6', 'gemini-3.1-pro-thinking'], 'deepseek-v4-pro')).toBe('deepseek-v4-pro')
+  })
+  it('非 fast 的精确 flash 优先于 flash-fast（fast 会全量回写易截断）', () => {
+    expect(pickLightModel(['deepseek-v4-flash-fast', 'deepseek-v4-flash'], 'pro')).toBe('deepseek-v4-flash')
+    // 只有 fast 变体时仍用它（好过重型思考模型）
+    expect(pickLightModel(['deepseek-v4-flash-fast', 'deepseek-v4-pro'], 'deepseek-v4-pro')).toBe('deepseek-v4-flash-fast')
+  })
+  it('同优先级优先无 [渠道] 前缀的主渠道 id', () => {
+    const list = ['[次][Cloud]DeepSeek-V4-Flash', 'deepseek-v4-flash'].sort()
+    expect(pickLightModel(list, 'pro')).toBe('deepseek-v4-flash')
   })
 })
 
@@ -79,5 +89,25 @@ describe('补全/主模型指令的「每幕必刷新」提示', () => {
     const instr = buildUiTemplateUpdateInstruction([tpl], {})
     expect(instr).not.toContain('每幕必刷新')
     expect(instr).toContain('ui_template_updates')
+  })
+})
+
+describe('parseUpdatesPayload 截断 JSON 抢救', () => {
+  it('完整 JSON 正常解析', () => {
+    const ups = parseUpdatesPayload('{"updates":[{"id":"t1","variables":{"a":"1"}}]}')
+    expect(ups).toHaveLength(1)
+    expect(ups[0].variables?.a).toBe('1')
+  })
+  it('尾部被 max_tokens 截断、缺闭合括号时救回已完整写出的字段', () => {
+    // 最后字段 c 后本应有 }}，实际只剩 ]}（fast 模型全量回写被砍断的典型形态）
+    const truncated = '{"updates":[{"id":"t1","variables":{"env_location":"卧室","choice_summary":"深夜","npc1_name":"陆晴"}]}'
+    const ups = parseUpdatesPayload(truncated)
+    expect(ups.length).toBe(1)
+    const v = ups[0].variables || {}
+    expect(v.env_location).toBe('卧室')
+    expect(v.choice_summary).toBe('深夜')
+  })
+  it('彻底无法解析时返回空数组而非抛错', () => {
+    expect(parseUpdatesPayload('完全不是JSON的一段解释文字')).toEqual([])
   })
 })

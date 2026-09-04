@@ -16,13 +16,16 @@ const EXCLUDE = /(thinking|think|opus|embedding|diffusion|image|video|audio|tts|
 
 /** 优先级从高到低（越靠前越优先用于补全） */
 const PREFERRED: RegExp[] = [
-  /deepseek[\w.\-]*flash[\w.\-]*fast/i, // deepseek flash-fast：纯输出、最快
-  /deepseek[\w.\-]*flash/i, // deepseek flash：实测不产生 reasoning、字段改得最全
-  /gemini[\w.\-]*flash/i, // gemini flash（非 thinking 版）
+  // deepseek flash「非 fast」实测最稳：只回传变化字段、一次可改 120+ 字段且不截断
+  /deepseek[\w.\-]*flash(?![\w\-]*fast)/i,
+  /gemini[\w.\-]*flash/i, // gemini flash（非 thinking 版，已在 EXCLUDE 排除 thinking）
   /glm[\w.\-]*flash/i,
   /doubao[\w.\-]*(lite|turbo)/i,
   /qwen[\w.\-]*(flash|turbo|lite)/i,
-  /(^|[\W])(flash|fast|lite|turbo|mini|small|nano)(\W|$)/i, // 任意其它轻量命名
+  // *-fast 变体速度快但实测会「全量回写所有字段」导致超长截断、JSON 残缺，故降级到精确 flash 之后
+  /deepseek[\w.\-]*flash[\w.\-]*fast/i,
+  /(^|[\W])(flash|lite|turbo|mini|small|nano)(\W|$)/i, // 任意其它轻量命名
+  /(^|[\W])fast(\W|$)/i, // 最后才用泛 fast
 ]
 
 /**
@@ -35,7 +38,8 @@ export function pickLightModel(available: readonly string[] | undefined | null, 
   if (!available || available.length === 0) return mainModel
   const pool = available.filter((m) => typeof m === 'string' && m && !EXCLUDE.test(m))
   for (const re of PREFERRED) {
-    const hit = pool.find((m) => re.test(m))
+    // 同一优先级里优先「无 [渠道] 前缀」的干净 id（主渠道），其次才是带前缀的备用渠道同名模型
+    const hit = pool.find((m) => re.test(m) && !/^\[/.test(m)) ?? pool.find((m) => re.test(m))
     if (hit) return hit
   }
   return mainModel

@@ -312,7 +312,17 @@ export const useChatStore = defineStore('chat', () => {
     // flash 模型 > 主模型。结构化字段提取若用深度思考模型，其思考 token 会吃光 max_tokens
     // 预算，导致零输出(finish=length)或只改少数字段、漏掉场景/选项（2026-09 实测）。
     const explicitAux = settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel
-    const auxModel = explicitAux || pickLightModel(settings.modelsCache, settings.activeModel)
+    // 模型列表缓存为空（页面刚加载、启动时的静默拉取尚未返回）会导致选不到轻量模型而回退主模型，
+    // 补全前补拉一次，消除时序竞态
+    let modelCache = settings.modelsCache
+    if (!explicitAux && (!modelCache || modelCache.length === 0)) {
+      try {
+        modelCache = (await settings.refreshModels()) || settings.modelsCache
+      } catch {
+        modelCache = settings.modelsCache
+      }
+    }
+    const auxModel = explicitAux || pickLightModel(modelCache, settings.activeModel)
     // 0=显式副模型 1=自动轻量模型 2=回退主模型（仅用于状态提示文案）
     const auxKind = explicitAux ? 0 : auxModel && auxModel !== settings.activeModel ? 1 : 2
     const cfg: ApiConfig = {

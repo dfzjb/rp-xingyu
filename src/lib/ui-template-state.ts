@@ -171,7 +171,7 @@ export function buildUiTemplateUpdateInstruction(
     CLOSE,
     '没有变量变化也必须输出：',
     `${OPEN}{"updates":[]}${CLOSE}`,
-    '只更新下方模板已定义的变量；不要修改HTML；不要编造无关字段。',
+    '只更新下方模板已定义的变量；不要修改HTML；不要编造无关字段；只输出本次发生变化的字段，严禁把整份变量原样回写（会超长被截断）。',
     '变量值可以是文字、数字、对象或数组；数组字段可返回完整数组，也可用 "items.0.name" 这种路径更新单项。',
     buildSceneRefreshHint(payload.map((p) => ({ currentVariables: p.currentVariables }))),
     '模板变量如下：',
@@ -203,7 +203,8 @@ export function buildAuxAnalysisMessages(
     '你是旧版的UI变量更新器。根据用户消息里提供的最近对话，更新UI模板中受剧情影响的变量。',
     '只返回JSON，不要解释，不要输出Markdown，不要展开思考过程。',
     '返回格式固定为 {"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}]}。',
-    'variables 只包含有变化的路径；值可以是文字、数字、对象或JSON数组。',
+    'variables 只包含「本次确实发生变化」的路径（通常十几到几十个）；值可以是文字、数字、对象或JSON数组。',
+    '严禁把没变化的字段原样回写、严禁输出整份变量：全量回写会让输出超长被截断、反而导致更新失败。',
     '装备栏、背包、动态、聊天记录这类列表字段可直接返回完整数组，也可用 "feed.0.text" 这种路径更新单项。',
     '没有变化则返回 {"updates":[]}。不要修改HTML，不要编造模板未定义的字段，变量路径必须与当前变量完全一致。',
     buildSceneRefreshHint(payload.map((p) => ({ currentVariables: p.currentVariables }))),
@@ -223,6 +224,32 @@ export function buildAuxAnalysisMessages(
 }
 
 /** 解析单个更新块内的 JSON 载荷为更新列表（state-sync 规则引擎复用） */
+/**
+ * 抢救被 max_tokens 截断、尾部不完整的更新 JSON。
+ * 典型场景：轻量 fast 模型不遵守「只输出变化字段」，把整份变量全量回写，输出超长被砍断，
+ * 结尾缺 `}}]}`。策略：从首个 `{` 起，逐次回退到上一个完整键值对边界（逗号），尝试补全闭合，
+ * 能 parse 即返回（已完整写出的字段都可救回）。
+ */
+function salvageTruncatedUpdates(body: string): unknown {
+  const start = body.indexOf('{')
+  if (start < 0) return null
+  let work = body.slice(start)
+  for (let i = 0; i < 600; i++) {
+    const cut = work.lastIndexOf(',')
+    if (cut <= 0) break
+    work = work.slice(0, cut)
+    // updates 结构 {"updates":[{"id":..,"variables":{ 已完整字段 ，依次尝试不同层级的闭合
+    for (const suffix of ['}}]}', '}]}', ']}', '}}', '}']) {
+      try {
+        return JSON.parse(work + suffix)
+      } catch {
+        /* 继续尝试下一种闭合 */
+      }
+    }
+  }
+  return null
+}
+
 export function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
   const body = String(raw || '')
     .replace(/^```(?:json)?\s*/i, '')
@@ -236,9 +263,9 @@ export function parseUpdatesPayload(raw: string): UiTemplateUpdate[] {
     const s = body.indexOf('{')
     const e = body.lastIndexOf('}')
     if (s >= 0 && e > s) {
-      try { parsed = JSON.parse(body.slice(s, e + 1)) } catch { return [] }
+      try { parsed = JSON.parse(body.slice(s, e + 1)) } catch { parsed = salvageTruncatedUpdates(body) }
     } else {
-      return []
+      parsed = salvageTruncatedUpdates(body)
     }
   }
   if (Array.isArray(parsed)) return parsed as UiTemplateUpdate[]
