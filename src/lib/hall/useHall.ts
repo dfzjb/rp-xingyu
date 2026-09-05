@@ -176,8 +176,9 @@ function loadProfile(): Profile {
   }
 }
 
-/** KP 模型配置：优先用跑团「模型设置」里的专用配置（只对跑团生效）；未启用或未填完整时回退主站「语言模型」当前激活槽位 */
-function kpApiConfig(): ApiConfig | null {
+/** KP 模型配置：优先用跑团「模型设置」里的专用配置（只对跑团生效）；未启用或未填完整时回退主站「语言模型」当前激活槽位。
+ *  除 KP 生成外，开团弹窗内 AI 锻造剧情模组也复用这份配置（烧谁的 key 与叙述生成同源）。 */
+export function kpApiConfig(): ApiConfig | null {
   const s = useSettingsStore()
   const h = s.settings.hallModel
   if (h?.enabled && h.baseUrl.trim() && h.apiKey.trim() && h.model.trim()) {

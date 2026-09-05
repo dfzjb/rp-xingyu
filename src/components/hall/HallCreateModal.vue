@@ -3,17 +3,18 @@
 // 简洁 = 房间名 + 简介 + 封面 + 上锁；详细 = 追加完整开团设定（规则系统/时代/基调/世界观/模组/NPC/房规/红线…），
 // 设定只进 KP 提示词与战役存档（E2EE 同步给成员），不发中继。
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Wand2, Lock, Info } from 'lucide-vue-next'
+import { Wand2, Lock, Info, Sparkles } from 'lucide-vue-next'
 import {
-  hall, connect, refreshCampaigns, aiAssistRoom, aiAssistCampaign,
+  hall, connect, refreshCampaigns, aiAssistRoom, aiAssistCampaign, kpApiConfig,
   type CreateMeta, type Profile,
 } from '../../lib/hall/useHall'
 import { genRoomCode } from '../../lib/hall/crypto'
 import { DEFAULT_HALL_RELAY, type HallRelayMode } from '../../lib/hall/protocol'
 import { useSettingsStore } from '../../stores/settings'
 import { RULE_PRESETS, TONE_OPTIONS, KP_STYLES, emptySetting, isEmptySetting, type RoomSetting } from '../../lib/hall/rules'
-import { normalizeModule, type GameModule } from '../../lib/hall/module'
+import { normalizeModule, type GameModule, type ModuleAiConfig } from '../../lib/hall/module'
 import { db } from '../../db'
+import AiModuleForge from '../AiModuleForge.vue'
 import { usePersonasStore } from '../../stores/personas'
 
 const emit = defineEmits<{ close: [] }>()
@@ -121,6 +122,26 @@ async function onModulePicked(e: Event) {
 function clearModule() {
   importedModule.value = null
   moduleId.value = ''
+}
+
+// ── AI 锻造模组（复用工作台锻造台组件；用 KP 模型配置，保存入库后自动回填选中）──
+const showForge = ref(false)
+const forgeKey = ref(0) // 每次打开重挂载，草稿状态归零
+const forgeCfg = computed<ModuleAiConfig | null>(() => {
+  const c = kpApiConfig()
+  return c ? { baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model } : null
+})
+
+function openForge() {
+  forgeKey.value += 1
+  showForge.value = true
+}
+
+async function onForgeSaved(m: GameModule) {
+  moduleList.value = await db.modules.orderBy('updatedAt').reverse().toArray()
+  importedModule.value = null
+  moduleId.value = m.id
+  showForge.value = false
 }
 
 // ── AI 辅助：简洁 = 房间名+简介；详细 = 全套开团设定 ──
@@ -394,7 +415,8 @@ watch(() => hall.state.phase, (p) => { if (p === 'room') emit('close') })
                 {{ m.name }}（{{ m.chapters.length }} 章 · {{ m.endings.length }} 结局{{ m.tables.length ? ` · ${m.tables.length} 转盘` : '' }}）
               </option>
             </select>
-            <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center">
+            <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap">
+              <button class="btn sm primary" :title="forgeCfg ? 'AI 生成一套新模组，可编辑后入库挂载' : '先在跑团「模型设置」或「更多 → 语言模型」配置 API'" @click="openForge"><Sparkles :size="13" />AI 锻造新模组</button>
               <button class="btn sm" @click="pickModuleFile">导入模组 JSON</button>
               <button v-if="pickedModule" class="btn sm ghost" @click="clearModule">清除已选</button>
               <input ref="moduleInput" type="file" accept="application/json,.json" hidden @change="onModulePicked" />
@@ -491,6 +513,19 @@ watch(() => hall.state.phase, (p) => { if (p === 'room') emit('close') })
             {{ creating ? '进入中…' : `创建并进入（${suggestCode.toUpperCase()}）` }}
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI 锻造剧情模组：叠在创建弹窗（z-index 100）之上的宽弹窗；保存入库后自动回填选中并关闭 -->
+  <div v-if="showForge" class="modal-mask" style="z-index: 110" @click.self="showForge = false">
+    <div class="modal-box wide" style="max-height: 88vh">
+      <div class="modal-head">
+        <h3>AI 锻造剧情模组</h3>
+        <button class="modal-close" @click="showForge = false">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: calc(88vh - 64px); overflow-y: auto">
+        <AiModuleForge :key="forgeKey" :cfg="forgeCfg" @saved="onForgeSaved" />
       </div>
     </div>
   </div>

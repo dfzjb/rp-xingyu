@@ -2,20 +2,19 @@
 /**
  * 剧情模组锻造：一句话构想 → AI 生成整套模组（章节大纲/规划路线/结局表/命运转盘随机表），
  * 或导入模组 JSON / 从库中取出一本，可视化编辑后存入本机模组库（db.modules），开团时挂载。
- * 模型配置复用工作台顶栏的模型选择器（model prop）。
+ * API 配置由父级注入（cfg prop）：AI 工作台传主站模型选择，创建房间弹窗传 KP 模型配置；
+ * 保存入库后 emit('saved', m) 供父级回填选中。
  */
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Download, FolderOpen, Plus, Save, Trash2, Upload, Wand2 } from 'lucide-vue-next'
 import { NButton } from 'naive-ui'
 import { db, downloadJson } from '../db'
-import { normalizeModule, MAX_CHAPTERS, MAX_ENDINGS, MAX_ROUTES, MAX_TABLES, endingKindLabel, type GameModule, type ModuleEndingKind } from '../lib/hall/module'
+import { aiGenerateModule, normalizeModule, MAX_CHAPTERS, MAX_ENDINGS, MAX_ROUTES, MAX_TABLES, type GameModule, type ModuleAiConfig, type ModuleEndingKind } from '../lib/hall/module'
 import { uuid } from '../lib/id'
-import { useSettingsStore } from '../stores/settings'
-import { chatOnce } from '../lib/api'
 import { toast } from '../lib/toast'
 
-const props = defineProps<{ model: string }>()
-const settings = useSettingsStore()
+const props = defineProps<{ cfg: ModuleAiConfig | null }>()
+const emit = defineEmits<{ saved: [m: GameModule] }>()
 
 // ── 模组库 ──
 const library = ref<GameModule[]>([])
@@ -40,41 +39,14 @@ const ENDING_KINDS: { value: ModuleEndingKind; label: string }[] = [
   { value: 'secret', label: '隐藏结局' },
 ]
 
-const MODULE_SYSTEM = `你是资深跑团模组设计师。根据用户的构想，设计一个带「大致剧情 + 规划路线 + 结局表 + 命运转盘随机表」的结构化剧情模组（骨架参考"轮回转盘"类穿越生存游戏：出身决定阵营路线、时间线钉住章节、条件达成即进入对应结局）。
-只输出严格 JSON，不要任何解释或代码围栏。字段要求：
-{
-  "name": "模组名（12 字内，有氛围感）",
-  "synopsis": "大致剧情，100-200 字：开端-冲突-终局方向，可含真相（这是给 KP 的）",
-  "chapters": [ { "title": "章节名（8 字内）", "summary": "本章剧情节拍/真相（KP 秘密，60-150 字）", "goal": "推进到下一章的条件（一句话）" } ],
-  "routes": [ { "name": "路线名（6 字内）", "entry": "进入条件（如出身抽到某身份、关键选择）", "summary": "此路线的剧情差异（敌我变化/专属节拍，50-120 字）" } ],
-  "endings": [ { "name": "结局名", "kind": "good|bad|normal|secret", "condition": "达成条件（一句话，可判定）", "epilogue": "终章旁白锚点（30-80 字）" } ],
-  "tables": [ { "name": "转盘名", "usage": "create|action", "entries": [ { "label": "条目名（8 字内）", "weight": 权重整数, "note": "抽中效果/备注（30 字内）" } ] } ]
-}
-数量要求：chapters 按用户指定章节数（缺省 5 章，4-10 章之间）；routes 0-3 条（有阵营分支时必给至少 1 条，入口尽量挂到出身转盘条目上）；endings 3-6 个（至少 1 个好结局、1 个坏结局，条件不重叠）；tables：usage="create" 的出身转盘 1 张（5-8 项，权重和约 20，各项 note 带可玩的加成/设定），用户需要时再加 1 张 usage="action" 的行动/遭遇转盘（6-10 项）。`
-
 async function genModule() {
   if (busy.value) return
   if (!idea.value.trim()) { error.value = '先用一句话描述你想要的模组'; return }
-  if (!props.model) { error.value = '请先在工作台右上角选择模型'; return }
+  if (!props.cfg) { error.value = '请先配置 API 与模型（跑团用「模型设置」，主站用「语言模型」）'; return }
   busy.value = true
   error.value = ''
   try {
-    const raw = await chatOnce({
-      baseUrl: settings.settings.apiBaseUrl,
-      apiKey: settings.settings.apiKey,
-      model: props.model,
-      temperature: 0.85,
-      maxTokens: 8000,
-      reasoningEffort: 'minimal',
-    }, [
-      { role: 'system', content: MODULE_SYSTEM },
-      { role: 'user', content: `模组构想：${idea.value.trim()}\n章节数：${wantChapters.value} 章\n随机表：${wantTables.value ? '出身转盘必带，行动转盘按题材决定' : '只要出身转盘'}` },
-    ])
-    let s = raw.trim()
-    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (fence) s = fence[1].trim()
-    const m = normalizeModule(JSON.parse(s))
-    if (!m) throw new Error('AI 返回了空模组，请重试')
+    const m = await aiGenerateModule(props.cfg, idea.value, { chapters: wantChapters.value, withActionTable: wantTables.value })
     draft.value = { ...m, id: '' }
     toast.success('模组已生成，检查后保存入库')
   } catch (err) {
@@ -115,6 +87,7 @@ async function saveDraft() {
   await db.modules.put(saved)
   await refreshLibrary()
   draft.value = JSON.parse(JSON.stringify(saved)) as GameModule
+  emit('saved', saved)
   toast.success(`模组「${saved.name}」已入库——开团时可在详细模式里挂载`)
 }
 
@@ -306,6 +279,29 @@ const moduleSubtitle = (m: GameModule) =>
 </template>
 
 <style scoped>
+/* 生成作曲台（与工作台同款观感；样式随组件自带，父页面无需提供） */
+.composer {
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--bg-1);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  margin-bottom: 16px;
+}
+.composer:focus-within {
+  border-color: rgba(139, 92, 246, 0.55);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12);
+}
+.composer-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 15px 18px 0; }
+.composer-title { font-size: 1.08rem; font-weight: 800; color: var(--text-0); }
+.composer-desc { font-size: 0.8rem; color: var(--text-2); }
+.composer-input {
+  display: block; width: 100%; border: none; outline: none; background: transparent;
+  min-height: 130px; resize: vertical; padding: 12px 18px;
+  font: inherit; font-size: 0.98rem; line-height: 1.75; color: var(--text-0);
+}
+.composer-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 12px 12px; }
+.aiw-actions { margin-top: 16px; display: flex; gap: 10px; }
+
 .mforge-panel {
   border: 1px solid var(--line-strong);
   border-radius: 14px;

@@ -352,3 +352,61 @@ export function renderModuleBlock(m: GameModule | null | undefined, progress?: M
   lines.push('- 进度上报：当剧情推进导致章节切换、时间线推进、路线变动、出现值得记住的关键旗标、或达成结局时，在正文结束后另起一行输出一次 <module>{"chapter":"章节id","day":天数,"route":"路线id","addFlags":["旗标"],"removeFlags":["旗标"],"ending":"结局id"}</module>。章节/天数/路线直接给当前值；没有变化的字段省略；没有任何推进就完全不输出 <module>；结局 id 只在真正达成时输出一次。')
   return lines.join('\n')
 }
+
+// ── AI 锻造：一句话构想 → 整套模组（工作台与创建房间弹窗共用）──
+
+/** AI 生成所需的最小调用配置（走 OpenAI 兼容接口） */
+export interface ModuleAiConfig {
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
+export const MODULE_AI_SYSTEM = `你是资深跑团模组设计师。根据用户的构想，设计一个带「大致剧情 + 规划路线 + 结局表 + 命运转盘随机表」的结构化剧情模组（骨架参考"轮回转盘"类穿越生存游戏：出身决定阵营路线、时间线钉住章节、条件达成即进入对应结局）。
+只输出严格 JSON，不要任何解释或代码围栏。字段要求：
+{
+  "name": "模组名（12 字内，有氛围感）",
+  "synopsis": "大致剧情，100-200 字：开端-冲突-终局方向，可含真相（这是给 KP 的）",
+  "chapters": [ { "title": "章节名（8 字内）", "summary": "本章剧情节拍/真相（KP 秘密，60-150 字）", "goal": "推进到下一章的条件（一句话）" } ],
+  "routes": [ { "name": "路线名（6 字内）", "entry": "进入条件（如出身抽到某身份、关键选择）", "summary": "此路线的剧情差异（敌我变化/专属节拍，50-120 字）" } ],
+  "endings": [ { "name": "结局名", "kind": "good|bad|normal|secret", "condition": "达成条件（一句话，可判定）", "epilogue": "终章旁白锚点（30-80 字）" } ],
+  "tables": [ { "name": "转盘名", "usage": "create|action", "entries": [ { "label": "条目名（8 字内）", "weight": 权重整数, "note": "抽中效果/备注（30 字内）" } ] } ]
+}
+数量要求：chapters 按用户指定章节数（缺省 5 章，4-10 章之间）；routes 0-3 条（有阵营分支时必给至少 1 条，入口尽量挂到出身转盘条目上）；endings 3-6 个（至少 1 个好结局、1 个坏结局，条件不重叠）；tables：usage="create" 的出身转盘 1 张（5-8 项，权重和约 20，各项 note 带可玩的加成/设定），用户需要时再加 1 张 usage="action" 的行动/遭遇转盘（6-10 项）。`
+
+/** 从模型回复里截取最外层 JSON 对象（容忍代码围栏） */
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  const cleaned = text.replace(/```(?:json)?/gi, '')
+  const s = cleaned.indexOf('{')
+  const e = cleaned.lastIndexOf('}')
+  if (s < 0 || e <= s) return null
+  try {
+    return JSON.parse(cleaned.slice(s, e + 1)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** 一句话构想 → 整套结构化模组（工作台与创建房间弹窗共用；走 OpenAI 兼容接口） */
+export async function aiGenerateModule(
+  cfg: ModuleAiConfig,
+  idea: string,
+  opts: { chapters?: number; withActionTable?: boolean } = {},
+): Promise<GameModule> {
+  const { chatOnce } = await import('../api')
+  const user = `模组构想：${idea.trim()}\n章节数：${opts.chapters || 5} 章\n随机表：${opts.withActionTable === false ? '只要出身转盘' : '出身转盘必带，行动转盘按题材决定'}`
+  const raw = await chatOnce({
+    baseUrl: cfg.baseUrl,
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    temperature: 0.85,
+    maxTokens: 8000,
+    reasoningEffort: 'minimal',
+  }, [
+    { role: 'system', content: MODULE_AI_SYSTEM },
+    { role: 'user', content: user },
+  ])
+  const m = normalizeModule(extractJsonObject(raw))
+  if (!m) throw new Error('AI 返回了空模组，请重试或换个说法')
+  return m
+}

@@ -111,6 +111,13 @@ async function callAi(systemPrompt: string, userPrompt: string): Promise<string>
   ])
 }
 
+/** 剧情模组锻造台的 API 配置：跟随顶栏模型选择（未配 key/模型时为 null，锻造台内提示） */
+const forgeCfg = computed(() => {
+  const model = effectiveModel.value
+  if (!settings.settings.apiKey || !model) return null
+  return { baseUrl: settings.settings.apiBaseUrl, apiKey: settings.settings.apiKey, model }
+})
+
 function extractJson(raw: string): unknown {
   let s = raw.trim()
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -407,7 +414,7 @@ function runGenerate() {
         <!-- 主内容 -->
         <main class="aiw-main">
           <!-- 剧情模组：独立锻造台（生成/导入/编辑/模组库一体） -->
-          <AiModuleForge v-if="tab === 'module'" :model="effectiveModel" />
+          <AiModuleForge v-if="tab === 'module'" :cfg="forgeCfg" />
 
           <template v-else>
           <!-- 目标角色卡选择（世界书/正则/UI模板需要） -->
