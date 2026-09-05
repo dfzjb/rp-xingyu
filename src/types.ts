@@ -185,6 +185,15 @@ export interface MemoryEntry {
   createdAt: number
   /** 向量模式：文本嵌入向量（由 embedding 模型生成） */
   embedding?: number[]
+  /** 向量模式（旧版对齐）：原文段落（"用户：…\n角色卡：…"拼接），注入时优先于 summary 展示 */
+  paragraph?: string
+  /** 向量模式（旧版对齐）：来源角色与说话人 */
+  sourceRole?: 'user' | 'assistant' | 'mixed'
+  sourceName?: string
+  /** 向量模式（旧版对齐）：内容指纹（归一化文本前 1000 字，去重用） */
+  contentFingerprint?: string
+  /** 向量检索得分（运行时）：注入时转为 similarity 百分比，不落库 */
+  vectorScore?: number
 }
 
 /** 跑团专用 KP 模型配置（只对在线跑团生效；未配置完整时回退主站「语言模型」） */

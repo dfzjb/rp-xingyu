@@ -225,17 +225,18 @@ const embeddingModelOptions = computed(() => {
               <span v-else-if="settings.settings.memoryMode !== 'vector' && !settings.settings.memoryAuxModel" class="mem-adv-warn">（总结模式：副模型未配置，不会自动提炼 / 评判 / 补录）</span>
             </summary>
             <div style="display: flex; gap: 12px; flex-wrap: wrap; margin: 10px 0 0">
-              <div class="field" style="width: 220px; margin-bottom: 0">
-                <label>记忆模式</label>
-                <n-select
-                  size="small"
-                  :value="settings.settings.memoryMode || 'summary'"
-                  :options="[
-                    { label: '总结模式（全量注入）', value: 'summary' },
-                    { label: '向量模式（语义检索）', value: 'vector' },
-                  ]"
-                  @update:value="(v: string) => settings.patch({ memoryMode: v as never })"
-                />
+              <div class="field" style="width: 280px; margin-bottom: 0">
+                <label>记忆模式（滑块切换）</label>
+                <div style="display: flex; align-items: center; gap: 10px; padding-top: 5px">
+                  <NSwitch
+                    size="small"
+                    :value="(settings.settings.memoryMode || 'summary') === 'vector'"
+                    @update:value="(v: boolean) => settings.patch({ memoryMode: v ? 'vector' : 'summary' })"
+                  />
+                  <span style="font-size: 0.82rem">
+                    {{ (settings.settings.memoryMode || 'summary') === 'vector' ? '向量模式（语义检索）' : '总结模式（全量注入）' }}
+                  </span>
+                </div>
               </div>
               <div v-if="settings.settings.memoryMode !== 'vector'" class="field" style="flex: 1; min-width: 220px; margin-bottom: 0">
                 <label>总结模式副模型（同时负责好感度评判；未配置 = 不自动总结/评判，不回退主模型）</label>

@@ -583,3 +583,35 @@ describe('整页面板托管（副模型接管 AI 自画面板）', () => {
     expect(sys).not.toContain('【UI 面板当前状态】')
   })
 })
+
+describe('向量记忆注入（旧版 role_memory_vector_recall 格式）', () => {
+  it('chunk 记忆按 memory_fragment XML 注入，summary 记忆维持原样式', () => {
+    const c = char()
+    const nodes = chain(['用户提问', '艾拉回应'])
+    const opts: PromptOptions = {
+      memories: [
+        {
+          id: 'v1', sessionId: 's', summary: '用户：我捡了 100 金币\n角色卡：艾拉收好',
+          paragraph: '用户：我捡了 100 金币\n角色卡：艾拉收好',
+          turn: 3, kind: 'chunk', enabled: true, classicMemory: true, source: 'ai', createdAt: 1,
+          vectorScore: 0.834,
+        },
+        {
+          id: 's1', sessionId: 's', summary: '主角与艾拉立约买药水',
+          enabled: true, classicMemory: true, source: 'ai', createdAt: 2,
+        },
+      ],
+    }
+    const sys = buildPrompt(c, undefined, nodes, 20, opts)[0].content
+    // 旧版 XML 块
+    expect(sys).toContain('<role_memory_vector_recall>')
+    expect(sys).toContain('以下内容是从往期对话记录中按当前输入检索出的相关记忆分片，并非全部历史。')
+    expect(sys).toContain('<memory_fragment turn="3" similarity="83.4%">')
+    expect(sys).toContain('用户：我捡了 100 金币')
+    expect(sys).toContain('</role_memory_vector_recall>')
+    // summary 记忆维持原样式
+    expect(sys).toContain('【此前剧情记忆】\n主角与艾拉立约买药水')
+    // chunk 不再走【此前剧情记忆】
+    expect(sys).not.toContain('【此前剧情记忆】\n用户：我捡了 100 金币')
+  })
+})

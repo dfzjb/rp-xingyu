@@ -6,7 +6,7 @@ import { uuid } from '../lib/id'
 import { streamChat, chatOnce, type ApiConfig } from '../lib/api'
 import { buildPrompt, buildPromptTrace, type ApiMessage, type PromptTraceEntry } from '../lib/prompt'
 import { deepPlain } from '../lib/plain'
-import { distillMemoriesFromChat, backfillMemories, searchVectorMemories, autoIngestVectorFloors } from '../lib/memories'
+import { distillMemoriesFromChat, backfillMemories, searchVectorMemories, autoIngestVectorFloors, distillTurnMemory } from '../lib/memories'
 import { mergeNpcEvalResults, listNpcAffinities, affinityScore, deriveStage } from '../lib/affinity'
 import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
@@ -244,6 +244,8 @@ export const useChatStore = defineStore('chat', () => {
       await generateInto(s, liveAssistant, char, persona, instruction)
       // 记忆自动巡逻：AI 回复完成后按楼数阈值后台提炼
       void maybeAutoPatrol(s)
+      // 每轮记忆入库（两种模式都每轮）：总结=副模型提炼本轮；向量=本轮分片入库
+      void maybeAutoMemoryTurn(s)
     } finally {
       pendingInstruction.value = ''
     }
@@ -815,6 +817,63 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 每轮记忆入库（两种模式都每轮，对齐旧版 autoExtract 的"每轮提取"语义）：
+   * - 总结模式：调记忆副模型把本轮（最后一个 user 起到链尾）提炼为记忆条目；
+   * - 向量模式：把本轮按旧版规则分片 embedding 入库（autoIngestVectorFloors 幂等，直接每轮跑）。
+   * 受 记忆引擎/自动巡逻 总开关门控；模型未配置时静默跳过。20 楼巡逻仍负责老楼层沉淀。
+   */
+  async function maybeAutoMemoryTurn(s: ChatSession) {
+    const settings = useSettingsStore()
+    if (settings.settings.memoryEngineOn === false || settings.settings.memoryAutoPatrol === false) return
+    const path: MsgNode[] = []
+    let cur: MsgNode | undefined = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
+    while (cur) {
+      path.unshift(cur)
+      cur = cur.parentId ? s.nodes[cur.parentId] : undefined
+    }
+    let lastUserIdx = -1
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (path[i].role === 'user') { lastUserIdx = i; break }
+    }
+    if (lastUserIdx < 0) return
+    const turnNodes = path.slice(lastUserIdx)
+    if (!turnNodes.some((n) => n.role === 'assistant' && (n.content || '').trim())) return
+    const turn = path.slice(0, lastUserIdx + 1).filter((n) => n.role === 'user').length
+    if (settings.settings.memoryMode === 'vector') {
+      if (!settings.settings.memoryEmbeddingModel) return
+      try {
+        await autoIngestVectorFloors(
+          {
+            baseUrl: settings.settings.apiBaseUrl,
+            apiKey: settings.settings.apiKey,
+            model: settings.settings.memoryEmbeddingModel,
+          },
+          turnNodes,
+          s.id,
+        )
+      } catch { /* embedding 暂不可用时静默，下轮增量再试 */ }
+    } else {
+      if (!settings.settings.memoryAuxModel) return
+      try {
+        await distillTurnMemory(
+          {
+            baseUrl: settings.settings.apiBaseUrl,
+            apiKey: settings.settings.apiKey,
+            model: settings.settings.memoryAuxModel,
+            temperature: 0.3,
+            maxTokens: 1024,
+            reasoningEffort: 'minimal',
+          },
+          turnNodes,
+          s.id,
+          turn,
+          (settings.settings.memorySummaryStyle || 'balanced') as never,
+        )
+      } catch { /* 静默：单轮提炼失败不打扰用户 */ }
+    }
+  }
+
   /** 页面卸载前冲洗流式状态 */
   async function flushOnUnload() {
     const s = currentSession.value
@@ -925,6 +984,8 @@ export const useChatStore = defineStore('chat', () => {
             void runPanelRedraw(s, chain)
           }
         }
+        // 每轮记忆入库（与主发送同源）：续写完成也算一轮
+        void maybeAutoMemoryTurn(s)
         // 用量统计：续写无新用户输入，发送口径计 0
         void recordUsage(0, Math.max(0, lastAi.content.length - baseLen))
         void persist(s)

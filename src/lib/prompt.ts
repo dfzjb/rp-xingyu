@@ -227,6 +227,35 @@ function assemble(
     sysMeta.push(['托管面板状态摘要'])
   }
 
+/** 向量记忆注入（旧版 role_memory_vector_recall 同构）：description 三行说明原文 + memory_fragment XML 分片 */
+function formatVectorRecallBlock(entries: MemoryEntry[]): string {
+  const escapeAttr = (v: unknown) =>
+    String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+  const indent4 = (text: string) =>
+    text
+      .split('\n')
+      .map((l) => `    ${l}`)
+      .join('\n')
+  const fragments = entries.map((m) => {
+    const turn = escapeAttr(m.turn ?? '?')
+    const score = typeof m.vectorScore === 'number' && Number.isFinite(m.vectorScore)
+      ? `${(m.vectorScore * 100).toFixed(1)}%`
+      : 'unknown'
+    const text = (m.paragraph || m.summary || '').trim()
+    return `  <memory_fragment turn="${turn}" similarity="${escapeAttr(score)}">\n${indent4(text)}\n  </memory_fragment>`
+  })
+  return [
+    '<role_memory_vector_recall>',
+    '  <description>',
+    '    以下内容是从往期对话记录中按当前输入检索出的相关记忆分片，并非全部历史。',
+    '    请尽力理解这些分片之间的前因后果、人物关系和情绪延续，理清它们与当前对话的关联。',
+    '    这些分片已按原对话时间顺序排列；它们不一定是今天或刚才发生的内容，请不要误当作当前现场，只把它们作为过往经历和关系背景参考。',
+    '  </description>',
+    fragments.join('\n\n'),
+    '</role_memory_vector_recall>',
+  ].join('\n')
+}
+
   // ── 记忆分配：绑定的挂 AI 消息后，未绑定的进 system 末尾 ──
   let memBudget = opts.memoryCharLimit ?? 1500
   const enabledMemories = (opts.memories || [])
@@ -248,7 +277,15 @@ function assemble(
     memBudget -= t.length
     return true
   }
-  for (const m of unbound) {
+  // 未绑定记忆分流：向量原文分片（kind=chunk）按旧版 role_memory_vector_recall 格式整块注入；
+  // 提炼摘要维持【此前剧情记忆】逐条注入并占用预算
+  const unboundChunks = unbound.filter((m) => m.kind === 'chunk')
+  const unboundSummaries = unbound.filter((m) => m.kind !== 'chunk')
+  if (unboundChunks.length) {
+    sysBlocks.push(formatVectorRecallBlock(unboundChunks))
+    sysMeta.push([`记忆·向量检索（${unboundChunks.length} 片）`])
+  }
+  for (const m of unboundSummaries) {
     if (!consumeMemory(m)) break
     sysBlocks.push(`【此前剧情记忆】\n${m.summary.trim()}`)
     sysMeta.push([`记忆·未绑定（${m.summary.trim().slice(0, 12)}…）`])
