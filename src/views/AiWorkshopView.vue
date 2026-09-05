@@ -4,7 +4,7 @@
  */
 import { computed, ref } from 'vue'
 import {
-  Wand2, User, BookOpen, Regex, LayoutTemplate, Sparkles, Save, Plus, Check,
+  Wand2, User, BookOpen, Regex, LayoutTemplate, Sparkles, Save, Plus, Check, Map,
 } from 'lucide-vue-next'
 import { NSelect, NButton } from 'naive-ui'
 import { useSettingsStore } from '../stores/settings'
@@ -13,6 +13,7 @@ import { chatOnce, groupedModelOptions } from '../lib/api'
 import { uuid } from '../lib/id'
 import { normalizeUiTemplates, type UiTemplate } from '../lib/uitemplate'
 import { toast } from '../lib/toast'
+import AiModuleForge from '../components/AiModuleForge.vue'
 import type { CharacterCard } from '../types'
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'goto', v: string): void }>()
@@ -20,7 +21,7 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'goto', v: string): void }>()
 const settings = useSettingsStore()
 const characters = useCharactersStore()
 
-type Tab = 'card' | 'worldbook' | 'regex' | 'uitpl'
+type Tab = 'card' | 'worldbook' | 'regex' | 'uitpl' | 'module'
 const tab = ref<Tab>('card')
 
 const TABS: { key: Tab; label: string; desc: string; icon: typeof Wand2 }[] = [
@@ -28,6 +29,7 @@ const TABS: { key: Tab; label: string; desc: string; icon: typeof Wand2 }[] = [
   { key: 'worldbook', label: '世界书', desc: '世界观设定', icon: BookOpen },
   { key: 'regex', label: '正则脚本', desc: '文本转换规则', icon: Regex },
   { key: 'uitpl', label: 'UI 模板', desc: '交互面板', icon: LayoutTemplate },
+  { key: 'module', label: '剧情模组', desc: '章节/路线/结局/转盘', icon: Map },
 ]
 
 /** 每个页签的输入区文案与示例 */
@@ -55,6 +57,12 @@ const TAB_META: Record<Tab, { title: string; desc: string; placeholder: string; 
     desc: '自包含 HTML 面板，支持 {{变量}} 插值与 {{#each}} 循环',
     placeholder: '例如：一个角色状态面板，显示 HP/MP 条、金币数量和背包物品列表，深色赛博朋克风格…',
     examples: ['HP/MP 状态条 + 金币面板', '五维好感度进度条', '背包物品列表（深色风）'],
+  },
+  module: {
+    title: '剧情模组锻造', action: '生成',
+    desc: '章节大纲、路线分支、结局表与命运转盘（在线跑团用）',
+    placeholder: '',
+    examples: [],
   },
 }
 const meta = computed(() => TAB_META[tab.value])
@@ -326,18 +334,19 @@ async function applyUiTemplate() {
   uiInput.value = ''
 }
 
-/** 四个页签共用一个输入作曲台：随页签切换读写各自的输入 */
+/** 四个页签共用一个输入作曲台：随页签切换读写各自的输入（剧情模组页签自带生成台，不参与） */
 const activeInput = computed<string>({
   get: () =>
     tab.value === 'card' ? cardInput.value
     : tab.value === 'worldbook' ? wbInput.value
     : tab.value === 'regex' ? rxInput.value
+    : tab.value === 'module' ? ''
     : uiInput.value,
   set: (v) => {
     if (tab.value === 'card') cardInput.value = v
     else if (tab.value === 'worldbook') wbInput.value = v
     else if (tab.value === 'regex') rxInput.value = v
-    else uiInput.value = v
+    else if (tab.value !== 'module') uiInput.value = v
   },
 })
 
@@ -345,6 +354,7 @@ function runGenerate() {
   if (tab.value === 'card') genCard()
   else if (tab.value === 'worldbook') genWorldbook()
   else if (tab.value === 'regex') genRegex()
+  else if (tab.value === 'module') return // 模组页签有自己的生成按钮
   else genUiTemplate()
 }
 </script>
@@ -372,7 +382,7 @@ function runGenerate() {
           />
         </div>
         <p style="font-size: 0.95rem; color: var(--text-2); margin: 0 0 16px; line-height: 1.7">
-          用自然语言描述，AI 帮你生成角色卡、世界书、正则脚本和 UI 模板。生成后可编辑再保存。
+          用自然语言描述，AI 帮你生成角色卡、世界书、正则脚本、UI 模板与在线跑团的剧情模组。生成后可编辑再保存。
         </p>
 
         <div class="aiw-card" style="flex: 1; display: flex; flex-direction: column; min-height: 0">
@@ -396,6 +406,10 @@ function runGenerate() {
 
         <!-- 主内容 -->
         <main class="aiw-main">
+          <!-- 剧情模组：独立锻造台（生成/导入/编辑/模组库一体） -->
+          <AiModuleForge v-if="tab === 'module'" :model="effectiveModel" />
+
+          <template v-else>
           <!-- 目标角色卡选择（世界书/正则/UI模板需要） -->
           <div v-if="tab !== 'card'" class="aiw-target">
             <label>生成对象</label>
@@ -503,6 +517,7 @@ function runGenerate() {
               <NButton type="primary" size="large" @click="applyUiTemplate"><template #icon><Plus /></template>添加到角色卡</NButton>
             </div>
           </div>
+          </template>
         </main>
         </div>
         </div>
