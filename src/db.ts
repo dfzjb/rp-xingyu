@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import type { NpcAffinity, CharacterCard, ChatSession, KvRow, MemoryEntry, Persona, Settings, UsageRow } from './types'
 import type { HallCampaign } from './lib/hall/protocol'
+import type { GameModule } from './lib/hall/module'
 import { deepPlain } from './lib/plain'
 
 export class RpDb extends Dexie {
@@ -13,6 +14,7 @@ export class RpDb extends Dexie {
   affinity!: Table<NpcAffinity, string>
   usage!: Table<UsageRow, string>
   campaigns!: Table<HallCampaign, string>
+  modules!: Table<GameModule, string>
 
   constructor() {
     super('RpSiteV2')
@@ -29,6 +31,10 @@ export class RpDb extends Dexie {
     // v2：在线跑团战役（房主本地持久化）。仅新增表，不改动既有表主键，升级安全
     this.version(2).stores({
       campaigns: 'id, roomCode, updatedAt',
+    })
+    // v3：剧情模组库（命运转盘随机表/章节/路线/结局，供开团挂载与 AI 生成）
+    this.version(3).stores({
+      modules: 'id, updatedAt',
     })
   }
 }
@@ -114,7 +120,7 @@ export async function saveSettings(patch: Partial<Settings>) {
 }
 
 export async function exportAll() {
-  const [characters, chats, personas, kv, settings, memories, affinity, usage, campaigns] = await Promise.all([
+  const [characters, chats, personas, kv, settings, memories, affinity, usage, campaigns, modules] = await Promise.all([
     db.characters.toArray(),
     db.chats.toArray(),
     db.personas.toArray(),
@@ -124,12 +130,13 @@ export async function exportAll() {
     db.affinity.toArray(),
     db.usage.toArray(),
     db.campaigns.toArray(),
+    db.modules.toArray(),
   ])
   return {
     format: 'rp-site-backup',
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
-    data: { characters, chats, personas, kv, settings, memories, affinity, usage, campaigns },
+    data: { characters, chats, personas, kv, settings, memories, affinity, usage, campaigns, modules },
   }
 }
 
@@ -144,13 +151,14 @@ export async function restoreAll(backup: {
     affinity?: unknown[]
     usage?: unknown[]
     campaigns?: unknown[]
+    modules?: unknown[]
   }
 }) {
   const d = backup?.data
   if (!d || !Array.isArray(d.characters) || !Array.isArray(d.chats)) {
     throw new Error('不是有效的备份文件（缺少 data.characters / data.chats）')
   }
-  await db.transaction('rw', [db.characters, db.chats, db.personas, db.kv, db.settings, db.memories, db.affinity, db.usage, db.campaigns], async () => {
+  await db.transaction('rw', [db.characters, db.chats, db.personas, db.kv, db.settings, db.memories, db.affinity, db.usage, db.campaigns, db.modules], async () => {
     await Promise.all([
       db.characters.clear(),
       db.chats.clear(),
@@ -161,6 +169,7 @@ export async function restoreAll(backup: {
       db.affinity.clear(),
       db.usage.clear(),
       db.campaigns.clear(),
+      db.modules.clear(),
     ])
     if (d.characters?.length) await db.characters.bulkPut(d.characters.map(deepPlain) as CharacterCard[])
     if (d.chats?.length) await db.chats.bulkPut(d.chats.map(deepPlain) as ChatSession[])
@@ -172,6 +181,7 @@ export async function restoreAll(backup: {
     if (d.affinity?.length) await db.affinity.bulkPut(d.affinity.map(deepPlain) as NpcAffinity[])
     if (d.usage?.length) await db.usage.bulkPut(d.usage.map(deepPlain) as UsageRow[])
     if (d.campaigns?.length) await db.campaigns.bulkPut(d.campaigns.map(deepPlain) as HallCampaign[])
+    if (d.modules?.length) await db.modules.bulkPut(d.modules.map(deepPlain) as GameModule[])
   })
 }
 

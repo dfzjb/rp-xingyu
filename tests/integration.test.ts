@@ -76,12 +76,13 @@ describe('全库备份往返 exportAll → restoreAll', () => {
     await db.memories.put({ id: 'm1', sessionId: 's1', content: '记得', createdAt: 1, updatedAt: 1 } as never)
     await db.affinity.put({ id: 's1:小明', sessionId: 's1', npcName: '小明', interest: 10, trust: 5, attraction: 5, annoyance: 0, cringe: 0, disgust: 0, conflictOverride: null, updatedAt: 1 })
     await db.usage.put({ date: '2026-08-29', charsIn: 10, charsOut: 20, calls: 1 } as never)
+    await db.modules.put({ id: 'mod1', name: '雾镇迷局', synopsis: '', chapters: [], routes: [], endings: [], tables: [], createdAt: 1, updatedAt: 1 })
 
     const backup = await exportAll()
     expect(backup.format).toBe('rp-site-backup')
 
     // 清库后恢复
-    await Promise.all([db.characters.clear(), db.chats.clear(), db.memories.clear(), db.affinity.clear(), db.usage.clear()])
+    await Promise.all([db.characters.clear(), db.chats.clear(), db.memories.clear(), db.affinity.clear(), db.usage.clear(), db.modules.clear()])
     expect(await db.characters.count()).toBe(0)
     await restoreAll(backup)
 
@@ -89,6 +90,7 @@ describe('全库备份往返 exportAll → restoreAll', () => {
     expect(await db.memories.count()).toBe(1)
     expect(await db.affinity.count()).toBe(1)
     expect(await db.usage.count()).toBe(1)
+    expect((await db.modules.get('mod1'))?.name).toBe('雾镇迷局')
   })
 
   it('非法备份（缺 characters/chats）抛错', async () => {

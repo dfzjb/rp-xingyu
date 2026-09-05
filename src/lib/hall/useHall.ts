@@ -9,9 +9,10 @@ import { computed, reactive } from 'vue'
 import { deriveRoomKey, keyProof, genRoomCode, openEvent, sealEvent, roomSecret } from './crypto'
 import { isPersisted, newEventId, PARTY_LINE, DEFAULT_HALL_RELAY, type HallCampaign, type HallRelayMode, type HallScene, type MemberInfo, type RoomEvent, type RoomMeta } from './protocol'
 import { formatRoll, rollDice } from './dice'
-import { buildKpMessages, buildRollNudge, extractRollRequests, extractStateUpdate, lineOf, renderSceneBlock, stripKpMarkup } from './kp'
+import { buildKpMessages, buildRollNudge, extractRollRequests, extractStateUpdate, lineOf, renderSceneBlock, stripKpOutput } from './kp'
 import { emptySetting, KP_STYLES, RULE_PRESETS, type RoomSetting } from './rules'
 import { emptyGameState, mergeStateUpdate, normalizeGameState, sameGameState, type HallGameState, type StateUpdate } from './gamestate'
+import { emptyProgress, extractModuleUpdate, MAX_FLAGS, mergeProgressUpdate, normalizeModule, normalizeProgress, pickWeighted, type GameModule } from './module'
 import { streamChat, type ApiConfig } from '../api'
 import { useSettingsStore } from '../../stores/settings'
 import { db } from '../../db'
@@ -33,6 +34,8 @@ export interface CreateMeta {
   locked: boolean
   /** 详细模式的开团设定（只走房主本地持久化与 E2EE 同步，不发给中继） */
   setting?: RoomSetting | null
+  /** 剧情模组（创建时从模组库挂载或导入；只走房主本地持久化与 E2EE 同步，不发给中继） */
+  module?: GameModule | null
   /** 中继模式：shared = 公共共享中继（默认）；private = 房主自己的中继，凭邀请链接进入 */
   relay?: HallRelayMode
 }
@@ -56,6 +59,7 @@ export function newCampaign(name: string, roomCode: string, meta?: Partial<Creat
     desc: meta?.desc ?? '',
     cover: meta?.cover ?? '',
     setting: meta?.setting ?? null,
+    module: meta?.module ?? null,
     relay: meta?.relay ?? 'shared',
   }
 }
@@ -225,6 +229,8 @@ const state = reactive({
   setting: null as RoomSetting | null,
   /** 战局状态（当前区域/道具/记忆）：房主来自战役并落库，成员经 state 事件/快照实时同步 */
   gameState: null as HallGameState | null,
+  /** 剧情模组定义：房主来自战役，成员经快照同步（进度在 gameState.progress 里） */
+  module: null as GameModule | null,
 })
 
 const lobby = reactive({
@@ -357,7 +363,7 @@ async function handleEvent(e: RoomEvent, from: string) {
       break
     case 'sync-request':
       if (state.isHost && campaign) {
-        void sendEvent({ k: 'sync', events: [...campaign.events], members: roster(), setting: campaign.setting, state: campaign.state ?? null, scenes: campaign.scenes ?? [], worldNote: campaign.worldNote }, from)
+        void sendEvent({ k: 'sync', events: [...campaign.events], members: roster(), setting: campaign.setting, state: campaign.state ?? null, scenes: campaign.scenes ?? [], worldNote: campaign.worldNote, module: campaign.module ?? null }, from)
       }
       break
     case 'sync': {
@@ -369,6 +375,7 @@ async function handleEvent(e: RoomEvent, from: string) {
       state.gameState = e.state ? normalizeGameState(e.state) : null
       state.scenes = e.scenes ? [...e.scenes] : []
       if (e.worldNote !== undefined) state.worldNote = e.worldNote
+      if (e.module !== undefined) state.module = e.module ? normalizeModule(e.module) : null
       break
     }
     case 'state':
@@ -536,6 +543,7 @@ async function enterRoomAsHost() {
   state.campaignName = campaign.name
   state.setting = campaign.setting ? { ...campaign.setting, tones: [...campaign.setting.tones] } : null
   state.gameState = campaign.state ? normalizeGameState(campaign.state) : null
+  state.module = campaign.module ? normalizeModule(campaign.module) : null
   state.scenes = campaign.scenes ? campaign.scenes.map((s) => ({ ...s })) : []
   state.worldNote = campaign.worldNote
   state.currentScene = PARTY_LINE
@@ -567,6 +575,7 @@ export function leaveRoom() {
   state.kpBusy = false
   state.setting = null
   state.gameState = null
+  state.module = null
   state.scenes = []
   state.worldNote = ''
   state.currentScene = PARTY_LINE
@@ -623,6 +632,23 @@ export async function sendRoll(expr: string, scene = PARTY_LINE): Promise<string
   } catch (err) {
     return (err as Error).message
   }
+}
+
+/** 命运转盘：本机对模组随机表做加权抽取，结果以 wheel 事件明牌广播（全员可见、进剧情流，KP 会读到） */
+export async function sendWheel(tableId: string, scene = PARTY_LINE): Promise<string | null> {
+  if (state.phase !== 'room') return null
+  const table = state.module?.tables.find((t) => t.id === tableId)
+  if (!table) return '找不到这张随机表'
+  const picked = pickWeighted(table.entries)
+  if (!picked) return '这张随机表还没有条目'
+  const e: RoomEvent = {
+    k: 'wheel', id: newEventId(), name: profile.name, charName: profile.charName,
+    tableId: table.id, tableName: table.name, label: picked.label, note: picked.note, at: Date.now(),
+    scene: lineTag(scene),
+  }
+  appendLocal(e)
+  await sendEvent(e)
+  return null
 }
 
 export async function saveWorldNote(note: string) {
@@ -702,6 +728,39 @@ export async function removeGameMemory(id: string): Promise<void> {
   await editGameState((s) => { s.memories = s.memories.filter((x) => x.id !== id) })
 }
 
+// ── 剧情模组进度：存在战局状态 progress 里，随 state 事件同步与持久化；房主可手动微调 ──
+
+export async function setProgressChapter(chapterId: string): Promise<void> {
+  await editGameState((s) => { s.progress = mergeProgressUpdate(s.progress, { chapter: chapterId }) })
+}
+
+export async function setProgressDay(day: number): Promise<void> {
+  const d = Math.max(0, Math.round(Number(day) || 0))
+  await editGameState((s) => { s.progress = mergeProgressUpdate(s.progress, { day: d }) })
+}
+
+export async function setProgressRoute(routeId: string): Promise<void> {
+  await editGameState((s) => { s.progress = mergeProgressUpdate(s.progress, { route: routeId }) })
+}
+
+/** 增/删一个关键旗标（已存在则删除） */
+export async function toggleProgressFlag(flag: string): Promise<void> {
+  const f = flag.trim().slice(0, 40)
+  if (!f) return
+  await editGameState((s) => {
+    const cur = s.progress ? normalizeProgress(s.progress) : emptyProgress()
+    const flags = cur.flags.includes(f)
+      ? cur.flags.filter((x) => x !== f)
+      : [...cur.flags, f].slice(Math.max(0, cur.flags.length + 1 - MAX_FLAGS))
+    s.progress = normalizeProgress({ ...cur, flags })
+  })
+}
+
+/** 开新周目：清空模组进度（章节/天数/路线/旗标/终局），模组定义与剧情流保留 */
+export async function resetProgress(): Promise<void> {
+  await editGameState((s) => { s.progress = undefined })
+}
+
 // ── 分线（剧情线）：房主建线/收线/重开，全量广播；party 主线内置不存表 ──
 
 async function commitScenes(scenes: HallScene[]): Promise<void> {
@@ -777,8 +836,8 @@ export async function generateKp(scene = state.currentScene || PARTY_LINE) {
   // 上下文取本机镜像：房主用战役权威值，成员用快照同步来的镜像（同步字段见 protocol.sync）
   const isHostRun = state.isHost && !!campaign
   const src = isHostRun && campaign
-    ? { events: campaign.events, worldNote: campaign.worldNote, setting: campaign.setting, scenes: campaign.scenes ?? [], game: campaign.state }
-    : { events: state.events, worldNote: state.worldNote, setting: state.setting, scenes: state.scenes, game: state.gameState }
+    ? { events: campaign.events, worldNote: campaign.worldNote, setting: campaign.setting, scenes: campaign.scenes ?? [], game: campaign.state, module: campaign.module ?? null }
+    : { events: state.events, worldNote: state.worldNote, setting: state.setting, scenes: state.scenes, game: state.gameState, module: state.module }
   const sceneName = line === PARTY_LINE ? '全体' : src.scenes.find((s) => s.id === line)?.name || '未知线'
   const narratorName = src.scenes.find((s) => s.id === line)?.generator?.trim() || '房主'
   state.kpBusy = true
@@ -797,11 +856,12 @@ export async function generateKp(scene = state.currentScene || PARTY_LINE) {
       members: roster(),
       worldNote: src.worldNote,
       setting: src.setting,
+      module: src.module,
       state: src.game,
       scene: sceneName,
       sceneBlock: renderSceneBlock(src.scenes, src.events),
     })
-    // KP 每轮可在文末用 <state> 上报战局变化：先在状态快照上累计，定稿时一次提交
+    // KP 每轮可在文末用 <state> 上报战局变化、<module> 上报模组进度：先在状态快照上累计，定稿时一次提交
     let stateAcc: HallGameState | null = src.game ? normalizeGameState(src.game) : null
     let promptChars = 0
     let completionChars = 0
@@ -824,6 +884,8 @@ export async function generateKp(scene = state.currentScene || PARTY_LINE) {
       completionChars += text.length
       const su = extractStateUpdate(text)
       if (su) stateAcc = mergeStateUpdate(stateAcc, su)
+      const mu = extractModuleUpdate(text)
+      if (mu) stateAcc = mergeStateUpdate(stateAcc, { progress: mu })
       const requests = extractRollRequests(text)
       if (requests.length && hop < 2) {
         const results: { label: string; detail: string }[] = []
@@ -844,13 +906,13 @@ export async function generateKp(scene = state.currentScene || PARTY_LINE) {
         if (results.length) {
           messages = [
             ...messages,
-            { role: 'assistant', content: stripKpMarkup(text) },
+            { role: 'assistant', content: stripKpOutput(text) },
             buildRollNudge(results),
           ]
           continue
         }
       }
-      const clean = stripKpMarkup(text).trim() || text.trim()
+      const clean = stripKpOutput(text) || text.trim()
       const finalEvt: RoomEvent = { k: 'narration', id: newEventId(), text: clean, at: Date.now(), scene: lineTag(line) }
       appendLocal(finalEvt)
       await sendEvent(finalEvt)

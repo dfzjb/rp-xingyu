@@ -4,6 +4,7 @@
  * 状态存房主战役文档、随快照/实时事件同步全员，并注入 KP 提示词——长团不丢记忆与道具。
  */
 import { newEventId } from './protocol'
+import { isEmptyProgress, mergeProgressUpdate, normalizeProgress, type ModuleProgress, type ModuleProgressUpdate } from './module'
 
 export interface HallItem {
   id: string
@@ -21,6 +22,8 @@ export interface HallGameState {
   area: string // 玩家当前所在区域/场景
   items: HallItem[]
   memories: HallMemory[]
+  /** 剧情模组进度（当前章节/天数/路线/旗标/结局）；无模组时缺省，老存档天然兼容 */
+  progress?: ModuleProgress
   updatedAt: number
 }
 
@@ -34,15 +37,16 @@ export function emptyGameState(): HallGameState {
 
 export function isEmptyGameState(s: HallGameState | null | undefined): boolean {
   if (!s) return true
-  return !s.area.trim() && s.items.length === 0 && s.memories.length === 0
+  return !s.area.trim() && s.items.length === 0 && s.memories.length === 0 && isEmptyProgress(s.progress)
 }
 
-/** KP 一次 <state> 上报的内容（字段均可缺省） */
+/** KP 一次 <state> 上报的内容（字段均可缺省）；progress 为剧情模组进度变更（<module> 上报解析后的挂载点） */
 export interface StateUpdate {
   area?: string
   add?: { name: string; note: string }[]
   remove?: string[]
   mem?: string[]
+  progress?: ModuleProgressUpdate
 }
 
 const clip = (v: unknown, n: number): string => String(v ?? '').trim().slice(0, n)
@@ -64,7 +68,13 @@ export function normalizeGameState(raw: unknown): HallGameState {
     })
     .filter((m) => m.text)
     .slice(0, MAX_MEMORIES)
-  return { area: clip(o.area, 60), items, memories, updatedAt: Number(o.updatedAt) || 0 }
+  return {
+    area: clip(o.area, 60),
+    items,
+    memories,
+    progress: o.progress === undefined ? undefined : normalizeProgress(o.progress),
+    updatedAt: Number(o.updatedAt) || 0,
+  }
 }
 
 /**
@@ -77,6 +87,7 @@ export function mergeStateUpdate(base: HallGameState | null | undefined, upd: St
     area: upd.area !== undefined ? clip(upd.area, 60) : cur.area,
     items: cur.items.map((x) => ({ ...x })),
     memories: cur.memories.map((x) => ({ ...x })),
+    progress: cur.progress ? { ...cur.progress, flags: [...cur.progress.flags] } : undefined,
     updatedAt: Date.now(),
   }
   for (const it of upd.add || []) {
@@ -96,6 +107,9 @@ export function mergeStateUpdate(base: HallGameState | null | undefined, upd: St
     const text = clip(m, 160)
     if (!text || next.memories.some((x) => x.text === text)) continue
     next.memories.push({ id: newEventId(), text, at: Date.now() })
+  }
+  if (upd.progress) {
+    next.progress = mergeProgressUpdate(next.progress, upd.progress)
   }
   if (next.items.length > MAX_ITEMS) next.items = next.items.slice(next.items.length - MAX_ITEMS)
   if (next.memories.length > MAX_MEMORIES) next.memories = next.memories.slice(next.memories.length - MAX_MEMORIES)

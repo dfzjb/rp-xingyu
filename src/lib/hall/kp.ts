@@ -7,6 +7,7 @@
 import type { MemberInfo, RoomEvent } from './protocol'
 import { PARTY_LINE, type HallScene } from './protocol'
 import { isEmptyGameState, type HallGameState } from './gamestate'
+import { renderModuleBlock, type GameModule } from './module'
 import { KP_STYLES, rulePreset, type RoomSetting } from './rules'
 
 export interface HallApiMessage {
@@ -88,6 +89,11 @@ export function stripKpMarkup(text: string): string {
   return stripStateBlocks(stripRollRequests(text))
 }
 
+/** 剥掉检定、战局与模组进度标记后的干净正文（KP 定稿进剧情流用） */
+export function stripKpOutput(text: string): string {
+  return stripKpMarkup(text).replace(/<module>[\s\S]*?<\/module>/gi, '').trim()
+}
+
 const KP_SYSTEM = `你是一名跑团主持人（KP），正在主持一场自由团的多人在线跑团，玩家们各自扮演自己的角色。
 
 职责与写法：
@@ -107,6 +113,8 @@ function renderEvent(e: RoomEvent): string {
       return `【旁白】${e.text}`
     case 'roll':
       return `【检定】${e.charName || e.name} 掷 ${e.detail}`
+    case 'wheel':
+      return `【转盘】${e.charName || e.name} 转动「${e.tableName}」：${e.label}${e.note ? `（${e.note}）` : ''}`
     default:
       return '' // system 等界面级事件不喂给 KP
   }
@@ -119,6 +127,8 @@ export interface KpContext {
   worldNote?: string
   /** 详细模式创建时填写的开团设定，可为空 */
   setting?: RoomSetting | null
+  /** 剧情模组定义（章节/路线/结局/随机表）；空 = 无模组自由团，不注入 */
+  module?: GameModule | null
   /** 当前战局状态（区域/道具/记忆），注入提示词保证长团不失忆；空则不注入 */
   state?: HallGameState | null
   /** 当前叙事的线名（缺省 = 全体主线）；自定义线时近期剧情只含本线 */
@@ -206,6 +216,7 @@ export function buildKpMessages(ctx: KpContext): HallApiMessage[] {
 
   const system = KP_SYSTEM +
     (ctx.setting ? `\n\n${renderSettingBlock(ctx.setting)}` : '') +
+    (ctx.module ? `\n\n${renderModuleBlock(ctx.module, ctx.state?.progress)}` : '') +
     (ctx.scene && ctx.scene !== PARTY_LINE ? `\n\n当前叙事线：${ctx.scene}（「近期剧情」只含本线经过，其他线见分线动向）` : '') +
     (ctx.sceneBlock ? `\n\n${ctx.sceneBlock}` : '') +
     (ctx.state && !isEmptyGameState(ctx.state) ? `\n\n${renderStateBlock(ctx.state)}` : '') +

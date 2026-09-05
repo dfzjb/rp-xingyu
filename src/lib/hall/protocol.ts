@@ -4,6 +4,7 @@
  */
 import type { RoomSetting } from './rules'
 import type { HallGameState } from './gamestate'
+import type { GameModule } from './module'
 
 export type PeerRole = 'host' | 'player'
 
@@ -54,6 +55,8 @@ export type RoomEvent =
   | { k: 'roll'; id: string; name: string; charName: string; expr: string; detail: string; total: number; at: number; scene?: string }
   /** 系统事件（成员进出、房间状态、叙述计费留痕等） */
   | { k: 'system'; id: string; text: string; at: number; scene?: string }
+  /** 命运转盘抽取结果（模组随机表，明牌全员可见并进剧情流，KP 据此融入剧情）；scene 缺省 = 全体线 */
+  | { k: 'wheel'; id: string; name: string; charName: string; tableId: string; tableName: string; label: string; note: string; at: number; scene?: string }
   /** 战局状态全量广播（当前区域/道具/记忆，KP 自动维护或房主手动改）；事件本身不落库——权威值存房主战役文档 */
   | { k: 'state'; state: HallGameState }
   /** 成员叙述者的战局上报：交给房主校验合并（战局权威仍在房主），合并后以 state 广播 */
@@ -66,13 +69,13 @@ export type RoomEvent =
   | { k: 'kp-end'; id: string; aborted?: boolean }
   /** 新成员向房主要战役快照（定向直发） */
   | { k: 'sync-request' }
-  /** 房主回快照：全量剧情事件 + 成员名单（含 peerId，供成员表对齐）+ 开团设定（成员只读展示）+ 战局状态 + 分线表 + 世界观备注（成员叙述者生成要用） */
-  | { k: 'sync'; events: RoomEvent[]; members: MemberInfo[]; setting?: RoomSetting | null; state?: HallGameState | null; scenes?: HallScene[]; worldNote?: string }
+  /** 房主回快照：全量剧情事件 + 成员名单（含 peerId，供成员表对齐）+ 开团设定（成员只读展示）+ 战局状态 + 分线表 + 世界观备注（成员叙述者生成要用）+ 剧情模组定义 */
+  | { k: 'sync'; events: RoomEvent[]; members: MemberInfo[]; setting?: RoomSetting | null; state?: HallGameState | null; scenes?: HallScene[]; worldNote?: string; module?: GameModule | null }
 
 export type RoomEventK = RoomEvent['k']
 
 /** 需要永久进入剧情流（房主落库、快照回放）的事件类型 */
-export const PERSISTED_KINDS: readonly RoomEventK[] = ['chat', 'narration', 'roll', 'system']
+export const PERSISTED_KINDS: readonly RoomEventK[] = ['chat', 'narration', 'roll', 'system', 'wheel']
 
 export function isPersisted(e: RoomEvent): boolean {
   return PERSISTED_KINDS.includes(e.k)
@@ -106,6 +109,8 @@ export interface HallCampaign {
   state?: HallGameState | null
   /** 分线表（缺省 = 只有全体主线，老存档天然兼容） */
   scenes?: HallScene[]
+  /** 剧情模组定义（创建时从模组库挂载；缺省 = 无模组自由团，老存档天然兼容） */
+  module?: GameModule | null
   /** 中继模式（老存档缺省：跟随「我的中继」设置） */
   relay?: HallRelayMode
 }
