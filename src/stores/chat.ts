@@ -359,7 +359,10 @@ export const useChatStore = defineStore('chat', () => {
         stage: deriveStage(a),
       }))
       const messages = buildAuxAnalysisMessages(uiTpls, states, floors, existingNpcs)
-      if (!messages.length) return
+      if (!messages.length) {
+        setUiTplStatus('skip', '面板变量：无启用模板，跳过补全')
+        return
+      }
       const raw = await chatOnce(cfg, messages)
       // 一次调用同时产出「模板变量更新」与「出场 NPC 好感」，两部分互不拖累
       const { updates, affinity } = parseAuxPayload(parseCot(raw).main)
@@ -498,6 +501,7 @@ export const useChatStore = defineStore('chat', () => {
         uiTemplates: uiTpls,
         uiTemplateStates: uiStates,
         stateSyncRules: syncRules,
+        uiMainModelUpdates: settings.settings.uiTemplateMainModelUpdates,
       })
     } catch (err) {
       return fail(`（上下文组装失败：${(err as Error)?.message || String(err)}）`)
@@ -741,6 +745,7 @@ export const useChatStore = defineStore('chat', () => {
       uiTemplateStates: uiStates,
       stateSyncRules: syncRules,
       promptEntries: (settings.settings.promptEntries || []).filter((p) => p.enabled),
+      uiMainModelUpdates: settings.settings.uiTemplateMainModelUpdates,
     })
     if (lastAi.content.trim()) {
       msgs.push({

@@ -421,3 +421,36 @@ describe('user_top 执行顺序（回归 R2：与旧版 5669-5680 逐字一致�
     expect(msgs[msgs.length - 1].content).toBe('a2')
   })
 })
+
+describe('UI 模板主模型同步开关（主模型纯扮演模式）', () => {
+  const uiTpls = [{
+    id: 't1',
+    name: '面板',
+    enabled: true,
+    htmlTemplate: '<b>{{npc1_favor}}</b>',
+    variableSchema: 'npc1_favor: 好感',
+    initialVariables: { npc1_favor: 20 },
+  }] as never
+
+  it('默认（不传开关，双保险模式）：注入更新指令与变量状态上下文', () => {
+    const c = char({ uiTemplates: uiTpls })
+    const msgs = buildPrompt(c, undefined, chain(['u', 'a']), 20, {
+      uiTemplates: uiTpls,
+      uiTemplateStates: { t1: { npc1_favor: 20 } },
+    })
+    expect(msgs.some((m) => m.content.includes('[UI模板变量更新]'))).toBe(true)
+    expect(msgs.some((m) => m.content.includes('<ui_template_state_context>'))).toBe(true)
+  })
+
+  it('uiMainModelUpdates=false：主模型不接收任何面板指令与变量状态（纯扮演）', () => {
+    const c = char({ uiTemplates: uiTpls })
+    const msgs = buildPrompt(c, undefined, chain(['u', 'a']), 20, {
+      uiTemplates: uiTpls,
+      uiTemplateStates: { t1: { npc1_favor: 20 } },
+      uiMainModelUpdates: false,
+    })
+    expect(msgs.some((m) => m.content.includes('[UI模板变量更新]'))).toBe(false)
+    expect(msgs.some((m) => m.content.includes('<ui_template_state_context>'))).toBe(false)
+    expect(msgs.some((m) => m.content.includes('npc1_favor'))).toBe(false)
+  })
+})

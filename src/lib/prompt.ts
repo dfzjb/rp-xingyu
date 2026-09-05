@@ -36,6 +36,8 @@ export interface PromptOptions {
   uiTemplates?: UiTemplate[]
   /** 会话级 UI 模板变量状态 */
   uiTemplateStates?: Record<string, Record<string, unknown>>
+  /** 主模型同步更新面板（默认 true = 双保险）。false：主模型不注入 UI 更新指令与变量状态上下文（纯扮演），面板由副模型负责 */
+  uiMainModelUpdates?: boolean
   /** 变量回写规则（含内置方言）；历史消息按此剥离更新块，缺省按内置规则剥离 */
   stateSyncRules?: StateSyncRule[]
   /** 世界书递归激活步数（默认 0 对齐旧版不链式扩散；>0 时启用 ST 式递归） */
@@ -161,8 +163,8 @@ export function buildPrompt(
   // ── 好感度状态行 ──
   for (const line of opts.affinityLines || []) sysBlocks.push(line)
 
-  // ── UI 模板变量状态上下文 ──
-  if (opts.uiTemplates?.length) {
+  // ── UI 模板变量状态上下文（仅主模型同步更新模式注入；关闭时主模型纯扮演，不接收面板状态）──
+  if (opts.uiTemplates?.length && opts.uiMainModelUpdates !== false) {
     const uiCtxPrompt = buildUiTemplateContextPrompt(opts.uiTemplates, opts.uiTemplateStates || {})
     if (uiCtxPrompt) sysBlocks.push(uiCtxPrompt)
   }
@@ -306,10 +308,9 @@ export function buildPrompt(
   }
 
   // ── UI 模板：主模型在正文「之前」同步输出变量更新块（面板更新的第一主力）──
-  // 对齐旧版 uiTemplateMainModelAnalysis 默认语义：主模型在「同一次流式响应」里同步给出更新块，
-  // 不依赖第二次请求；块前置（先块后正文）可免疫正文被 max_tokens 截断。
-  // 后台 runAuxTemplateAnalysis 保留为「补齐主模型漏字段 + 搭车好感评判」的兜底。
-  if (opts.uiTemplates?.length) {
+  // 仅双保险模式（settings.uiTemplateMainModelUpdates 开启）注入；默认关闭 = 主模型纯扮演，
+  // 面板全由副模型 runAuxTemplateAnalysis 每轮补全（实测思考模型会把面板字段规划写满思考链致正文零输出）。
+  if (opts.uiTemplates?.length && opts.uiMainModelUpdates !== false) {
     const uiInstr = buildUiTemplateUpdateInstruction(opts.uiTemplates, opts.uiTemplateStates || {}, 'before')
     if (uiInstr) merged.push({ role: 'system', content: uiInstr })
   }

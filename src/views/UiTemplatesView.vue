@@ -162,6 +162,12 @@ function patchAuxModel(v: string | null) {
   void settings.patch({ uiTemplateAuxModel: v || '' })
 }
 
+/** 主模型同步更新面板（双保险第一主力）：默认关 = 主模型纯扮演，面板全由副模型补全 */
+const mainModelSync = computed(() => settings.settings.uiTemplateMainModelUpdates === true)
+function patchMainModelSync(v: boolean) {
+  void settings.patch({ uiTemplateMainModelUpdates: v })
+}
+
 /** 补全输出上限：未配置时的内置默认值（与 chat.ts runAuxTemplateAnalysis 兜底一致） */
 const AUX_MAX_TOKENS_DEFAULT = 3000
 const auxMaxTokensValue = computed(() => Number(settings.settings.uiAuxMaxTokens) || AUX_MAX_TOKENS_DEFAULT)
@@ -303,9 +309,19 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
                 @update:value="(v: boolean) => settings.patch({ uiTemplateAuxAnalysis: v })"
               />
             </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px">
+              <span style="font-size: 0.76rem; line-height: 1.7; color: var(--text-2)">
+                <b style="color: var(--text-1)">主模型同步更新面板</b>——
+                {{ mainModelSync
+                  ? '已开启：主模型在正文最前同步输出更新块（双保险第一主力）。注意：会占用主模型 token，思考模型可能把字段规划写满思考链，导致正文被截断。'
+                  : '已关闭（默认·推荐）：主模型只写正文、不接收任何面板指令与变量状态，面板变量全由下方副模型每轮补全。' }}
+              </span>
+              <NSwitch size="small" :value="mainModelSync" @update:value="patchMainModelSync" />
+            </div>
             <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
-              面板更新采用「双保险」：<b>主模型在写正文的同一次回复里同步更新面板变量</b>（第一主力，不依赖额外请求，更新块放在正文最前，即使正文被 max_tokens 截断也不影响面板）；
-              每轮回复后再用下面的轻量模型<b>补齐主模型漏掉的字段，并同一次调用顺带评判出场 NPC 好感度</b>。不手动选模型时会自动挑选非思考 flash；
+              {{ mainModelSync
+                ? '双保险模式：主模型正文前同步更新块（第一主力，免疫正文截断）+ 下方轻量模型每轮补齐漏字段并顺带评判出场 NPC 好感度。'
+                : '主模型纯扮演模式：面板变量每轮由下方轻量模型补全，同一次调用顺带评判出场 NPC 好感度；不手动选模型时自动挑非思考 flash。' }}
               对话页底部会显示每次「主模型更新 N 项 / 补全 N 项，好感更新 M 人」的状态。
             </p>
 

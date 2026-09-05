@@ -244,6 +244,11 @@ export interface Settings {
    * 主模型回复未携带变量更新块时，后台用副模型按最近楼层补一次变量分析（对齐旧版二次分析管线）。
    * 关闭后完全依赖主模型在正文里输出 <ui_template_updates>（或卡级规则方言）。 */
   uiTemplateAuxAnalysis: boolean
+  /** 主模型同步更新面板变量（默认关 = 主模型纯扮演）。开启后主模型在回复最前同步输出
+   * <ui_template_updates> 更新块（双保险第一主力，不依赖额外请求）；关闭时主模型不接收
+   * 任何面板指令与变量状态（UI 上下文也不注入），面板变量全由副模型每轮补全。
+   * 实测思考模型会把面板字段规划写满思考链、吃满 max_tokens 致正文零输出，故默认关。 */
+  uiTemplateMainModelUpdates: boolean
   /** 副模型（空 = 复用记忆副模型 memoryAuxModel；两者都未配置则不兜底，不默认占用主模型） */
   uiTemplateAuxModel: string
   /** UI 面板变量兜底补全的输出上限 token（思考模型的思考 token 也占此预算，默认 2000） */
