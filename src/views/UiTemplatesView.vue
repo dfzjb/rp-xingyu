@@ -3,6 +3,7 @@
  * UI 模板管理：选择角色卡 → 查看其 uiTemplates 条目（沙箱 iframe 预览 + JSON 编辑）。
  * 数据随角色卡保存（旧版 uiTemplates 字段兼容）。
  * 附：变量回写规则（state-sync）——正则驱动的更新指令方言，让其他生态角色卡也能回写面板变量。
+ * 内置规则与面板状态更新器为全局配置，无需选择角色卡即可查看/调整。
  */
 import { computed, ref, watch } from 'vue'
 import { LayoutTemplate, Save, Workflow, Sparkles } from 'lucide-vue-next'
@@ -206,6 +207,7 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
           </select>
         </div>
 
+        <!-- 卡级：随卡保存的 UI 模板（需选择角色卡） -->
         <template v-if="card">
           <p style="font-size: 0.78rem; color: var(--text-2); margin-bottom: 12px; line-height: 1.7">
             交互式 HTML 模板。启用后会在对话中随最后一条 AI 消息渲染（开场白即可见），
@@ -256,21 +258,30 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
               </template>
             </div>
           </template>
+        </template>
+        <div v-else-if="characters.list.length" class="chat-empty" style="padding: 32px 0">
+          <div>↑ 请先选择一张角色卡，查看其随卡保存的 UI 模板与卡级自定义规则</div>
+        </div>
+        <div v-else class="chat-empty" style="padding: 40px 0">
+          <div class="empty-glyph"><LayoutTemplate /></div>
+          <div style="font-size: 0.9rem">还没有角色卡——先到「角色卡管理」导入</div>
+        </div>
 
-          <!-- 变量回写规则（state-sync）：正则驱动的更新指令方言 -->
-          <div class="section-title" style="font-size: 0.98rem; margin-top: 22px"><Workflow /> 变量回写规则</div>
-          <p style="font-size: 0.78rem; color: var(--text-2); margin-bottom: 10px; line-height: 1.7">
-            从 AI 回复中提取面板变量更新指令的正则规则（三步闭环的"解析"端，格式不限于 旧版 方言）。
-            内置规则全局生效；酒馆 <code v-pre>{{setvar}}</code> 宏默认关闭，需要时从下方预设添加为卡级规则。
-          </p>
+        <!-- 全局：变量回写规则（内置规则无需选卡，始终生效） -->
+        <div class="section-title" style="font-size: 0.98rem; margin-top: 22px"><Workflow /> 变量回写规则</div>
+        <p style="font-size: 0.78rem; color: var(--text-2); margin-bottom: 10px; line-height: 1.7">
+          从 AI 回复中提取面板变量更新指令的正则规则（三步闭环的"解析"端，格式不限于 旧版 方言）。
+          内置规则全局生效（无需选择角色卡）；酒馆 <code v-pre>{{setvar}}</code> 宏默认关闭，需要时从下方预设添加为卡级规则。
+        </p>
 
-          <div class="tpl-list">
-            <div v-for="b in builtins" :key="b.id" class="tpl-row" style="cursor: default; opacity: 0.9">
-              <span>内置 · {{ b.name }}</span>
-              <span style="font-size: 0.72rem" :style="{ color: b.disabled ? 'var(--text-2)' : 'var(--accent, #8b5cf6)' }">
-                {{ b.disabled ? '默认关闭（可从预设启用）' : '默认启用' }}
-              </span>
-            </div>
+        <div class="tpl-list">
+          <div v-for="b in builtins" :key="b.id" class="tpl-row" style="cursor: default; opacity: 0.9">
+            <span>内置 · {{ b.name }}</span>
+            <span style="font-size: 0.72rem" :style="{ color: b.disabled ? 'var(--text-2)' : 'var(--accent, #8b5cf6)' }">
+              {{ b.disabled ? '默认关闭（可从预设启用）' : '默认启用' }}
+            </span>
+          </div>
+          <template v-if="card">
             <div v-for="(r, i) in cardRules" :key="i" class="tpl-row" style="cursor: default">
               <span>卡级 · {{ r.name }}</span>
               <span style="font-size: 0.72rem; color: var(--text-2)">方言 {{ r.dialect }}</span>
@@ -278,8 +289,13 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
             <div v-if="!cardRules.length" style="font-size: 0.76rem; color: var(--text-2); padding: 2px 13px">
               该卡暂无自定义规则
             </div>
+          </template>
+          <div v-else style="font-size: 0.76rem; color: var(--text-2); padding: 2px 13px">
+            选择角色卡后可添加卡级自定义规则（上方内置规则无需选择、始终生效）
           </div>
+        </div>
 
+        <template v-if="card">
           <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px">
             <button class="btn sm" @click="addRulePreset('updateVariable')">＋ 酒馆 &lt;UpdateVariable&gt;</button>
             <button class="btn sm" @click="addRulePreset('setvar')">＋ 酒馆 <span v-pre>{{setvar}}</span> 宏</button>
@@ -290,7 +306,7 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
             </button>
           </div>
 
-          <div v-if="rulesEditing" class="card-panel" style="padding: 12px">
+          <div v-if="rulesEditing" class="card-panel" style="padding: 12px; margin-bottom: 10px">
             <textarea v-model="rulesJson" class="textarea mono" rows="10" />
             <div v-if="rulesError" class="danger-box">{{ rulesError }}</div>
             <div style="font-size: 0.74rem; color: var(--text-2); line-height: 1.7; margin-top: 6px">
@@ -298,74 +314,66 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
               flags（默认 g）、dialect（legacy_json / json_block / macro_setvar）、template（固定目标模板 id 或名称，可选）、disabled。
             </div>
           </div>
-
-          <!-- 面板状态更新器：每轮后台刷新面板变量 + 顺带评判出场 NPC 好感 -->
-          <div class="card-panel" style="padding: 12px; margin-top: 14px">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px">
-              <b style="font-size: 0.85rem; display: flex; align-items: center; gap: 6px"><Sparkles :size="14" /> 面板状态更新器（每轮自动）</b>
-              <NSwitch
-                size="small"
-                :value="settings.settings.uiTemplateAuxAnalysis !== false"
-                @update:value="(v: boolean) => settings.patch({ uiTemplateAuxAnalysis: v })"
-              />
-            </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px">
-              <span style="font-size: 0.76rem; line-height: 1.7; color: var(--text-2)">
-                <b style="color: var(--text-1)">主模型同步更新面板</b>——
-                {{ mainModelSync
-                  ? '已开启：主模型在正文最前同步输出更新块（双保险第一主力）。注意：会占用主模型 token，思考模型可能把字段规划写满思考链，导致正文被截断。'
-                  : '已关闭（默认·推荐）：主模型只写正文、不接收任何面板指令与变量状态，面板变量全由下方副模型每轮补全。' }}
-              </span>
-              <NSwitch size="small" :value="mainModelSync" @update:value="patchMainModelSync" />
-            </div>
-            <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
-              {{ mainModelSync
-                ? '双保险模式：主模型正文前同步更新块（第一主力，免疫正文截断）+ 下方轻量模型每轮补齐漏字段并顺带评判出场 NPC 好感度。'
-                : '主模型纯扮演模式：面板变量每轮由下方轻量模型补全，同一次调用顺带评判出场 NPC 好感度；不手动选模型时自动挑非思考 flash。' }}
-              对话页底部会显示每次「主模型更新 N 项 / 补全 N 项，好感更新 M 人」的状态。
-            </p>
-
-            <!-- 当前实际生效设置：不选择也能看到默认值 -->
-            <div class="aux-effective">
-              <span class="aux-effective-label">当前生效模型</span>
-              <span class="aux-effective-model">{{ effectiveAux.model }}</span>
-              <span class="aux-effective-via" :style="{ color: effectiveAux.tone }">{{ effectiveAux.via }}</span>
-            </div>
-
-            <div class="field" style="margin-bottom: 10px">
-              <label>手动指定更新模型（留空 = 按上面的默认自动选择）</label>
-              <NSelect
-                size="small"
-                filterable
-                tag
-                clearable
-                :value="auxModelValue"
-                placeholder="留空即自动挑选轻量 flash（推荐）"
-                :options="groupedModelOptions(settings.modelsCache, 'text')"
-                @update:value="patchAuxModel"
-              />
-            </div>
-
-            <div class="field" style="margin-bottom: 0; max-width: 260px">
-              <label>补全输出上限 tokens（留空/小于 256 用默认 {{ AUX_MAX_TOKENS_DEFAULT }}）</label>
-              <input
-                class="input"
-                type="number"
-                min="256"
-                step="128"
-                :value="auxMaxTokensValue"
-                @change="patchAuxMaxTokens(Number(($event.target as HTMLInputElement).value))"
-              />
-            </div>
-          </div>
         </template>
 
-        <div v-else-if="characters.list.length" class="chat-empty" style="padding: 40px 0">
-          <div>↑ 请先选择一张角色卡</div>
-        </div>
-        <div v-else class="chat-empty" style="padding: 60px 0">
-          <div class="empty-glyph"><LayoutTemplate /></div>
-          <div style="font-size: 0.9rem">还没有角色卡——先到「角色卡管理」导入</div>
+        <!-- 全局：面板状态更新器（无需选择角色卡） -->
+        <div class="card-panel" style="padding: 12px; margin-top: 14px">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px">
+            <b style="font-size: 0.85rem; display: flex; align-items: center; gap: 6px"><Sparkles :size="14" /> 面板状态更新器（每轮自动）</b>
+            <NSwitch
+              size="small"
+              :value="settings.settings.uiTemplateAuxAnalysis !== false"
+              @update:value="(v: boolean) => settings.patch({ uiTemplateAuxAnalysis: v })"
+            />
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px">
+            <span style="font-size: 0.76rem; line-height: 1.7; color: var(--text-2)">
+              <b style="color: var(--text-1)">主模型同步更新面板</b>——
+              {{ mainModelSync
+                ? '已开启：主模型在正文最前同步输出更新块（双保险第一主力）。注意：会占用主模型 token，思考模型可能把字段规划写满思考链，导致正文被截断。'
+                : '已关闭（默认·推荐）：主模型只写正文、不接收任何面板指令与变量状态，面板变量全由下方副模型每轮补全。' }}
+            </span>
+            <NSwitch size="small" :value="mainModelSync" @update:value="patchMainModelSync" />
+          </div>
+          <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
+            {{ mainModelSync
+              ? '双保险模式：主模型正文前同步更新块（第一主力，免疫正文截断）+ 下方轻量模型每轮补齐漏字段并顺带评判出场 NPC 好感度。'
+              : '主模型纯扮演模式：面板变量每轮由下方轻量模型补全，同一次调用顺带评判出场 NPC 好感度；不手动选模型时自动挑非思考 flash。' }}
+            对话页底部会显示每次「主模型更新 N 项 / 补全 N 项，好感更新 M 人」的状态。
+          </p>
+
+          <!-- 当前实际生效设置：不选择也能看到默认值 -->
+          <div class="aux-effective">
+            <span class="aux-effective-label">当前生效模型</span>
+            <span class="aux-effective-model">{{ effectiveAux.model }}</span>
+            <span class="aux-effective-via" :style="{ color: effectiveAux.tone }">{{ effectiveAux.via }}</span>
+          </div>
+
+          <div class="field" style="margin-bottom: 10px">
+            <label>手动指定更新模型（留空 = 按上面的默认自动选择）</label>
+            <NSelect
+              size="small"
+              filterable
+              tag
+              clearable
+              :value="auxModelValue"
+              placeholder="留空即自动挑选轻量 flash（推荐）"
+              :options="groupedModelOptions(settings.modelsCache, 'text')"
+              @update:value="patchAuxModel"
+            />
+          </div>
+
+          <div class="field" style="margin-bottom: 0; max-width: 260px">
+            <label>补全输出上限 tokens（留空/小于 256 用默认 {{ AUX_MAX_TOKENS_DEFAULT }}）</label>
+            <input
+              class="input"
+              type="number"
+              min="256"
+              step="128"
+              :value="auxMaxTokensValue"
+              @change="patchAuxMaxTokens(Number(($event.target as HTMLInputElement).value))"
+            />
+          </div>
         </div>
       </div>
     </div>
