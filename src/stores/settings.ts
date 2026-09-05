@@ -4,7 +4,7 @@ import { db, DEFAULT_SETTINGS, getSettings, saveSettings } from '../db'
 import type { PromptPreset, Settings } from '../types'
 import { fetchModels, normalizeBaseUrl } from '../lib/api'
 import { deepPlain } from '../lib/plain'
-import { BUILTIN_CORE_PRESETS, BUILTIN_MANAGED_PRESETS, builtinCoreDefaultEnabled, rebuildWithFactoryBuiltinEntries } from '../lib/builtinPresets'
+import { BUILTIN_CORE_PRESETS, BUILTIN_MANAGED_PRESETS, builtinCoreDefaultEnabled, enforcePerspectiveMutex, rebuildWithFactoryBuiltinEntries } from '../lib/builtinPresets'
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({ ...DEFAULT_SETTINGS })
@@ -141,6 +141,8 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   async function patch(p: Partial<Settings>) {
+    // 人称视角互斥：开启第二/第三人称其一时自动关闭另一条
+    if (p.promptEntries) p = { ...p, promptEntries: enforcePerspectiveMutex(p.promptEntries) }
     settings.value = { ...settings.value, ...p }
     await saveSettings(p)
   }

@@ -3,6 +3,7 @@
 import { computed } from 'vue'
 import { SlidersHorizontal } from 'lucide-vue-next'
 import { NSwitch } from 'naive-ui'
+import { applyPromptEntryPatch } from '../lib/builtinPresets'
 import { uuid } from '../lib/id'
 import { useSettingsStore } from '../stores/settings'
 import type { PromptPreset } from '../types'
@@ -22,9 +23,7 @@ async function removePromptEntry(id: string) {
   await settings.patch({ promptEntries: (settings.settings.promptEntries || []).filter((p) => p.id !== id) })
 }
 async function updatePromptEntry(i: number, patch: Partial<PromptPreset>) {
-  const list = [...(settings.settings.promptEntries || [])]
-  list[i] = { ...list[i], ...patch }
-  await settings.patch({ promptEntries: list })
+  await settings.patch({ promptEntries: applyPromptEntryPatch(settings.settings.promptEntries || [], i, patch) })
 }
 async function movePromptEntry(i: number, dir: -1 | 1) {
   const list = [...(settings.settings.promptEntries || [])]
