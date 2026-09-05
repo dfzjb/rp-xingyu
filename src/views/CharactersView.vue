@@ -325,6 +325,19 @@ function onMouseMove(e: MouseEvent) {
               <textarea v-model="editingCard.postHistoryInstructions" class="textarea" rows="2" />
             </div>
           </div>
+          <div class="field">
+            <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-weight: normal">
+              <input
+                type="checkbox"
+                style="width: auto; margin-top: 2px"
+                :checked="editingCard.uiPanelAuxTakeover !== false"
+                @change="editingCard.uiPanelAuxTakeover = ($event.target as HTMLInputElement).checked"
+              />
+              <span style="font-size: 0.8rem; color: var(--text-2); line-height: 1.6">
+                整页 HTML 面板由副模型接管（默认开启）：自动识别 AI 自画的整页面板消息——主模型只写剧情正文，历史面板不再整段进上下文（替换为文字摘要），面板由副模型每轮按剧情重绘并挂在最新回复下。
+              </span>
+            </label>
+          </div>
           <div style="display: flex; gap: 14px; flex-wrap: wrap">
             <div class="field" style="flex: 1; min-width: 140px">
               <label>作者（creator）</label>

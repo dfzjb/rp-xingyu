@@ -69,6 +69,8 @@ export interface ChatSession {
   nodes: Record<string, MsgNode>
   /** UI 模板运行时变量状态（templateId → variables），由 AI 回复中的 <ui_template_updates> 驱动 */
   uiTemplateStates?: Record<string, Record<string, unknown>>
+  /** 托管面板当前版本（自动识别 AI 自画整页 HTML 后由副模型重绘维护），随会话持久化 */
+  auxPanel?: { html: string; updatedAt: number }
 }
 
 /** 新站角色卡（字段与酒馆 v2/v3 兼容，未知字段原样保留） */
@@ -103,6 +105,8 @@ export interface CharacterCard {
   fav?: boolean
   /** 收藏时间（同为收藏时按此排序，最近的更靠前） */
   favAt?: number
+  /** 整页 HTML 面板由副模型接管（自动识别 AI 自画整页面板，主模型只写正文）；缺省=开启 */
+  uiPanelAuxTakeover?: boolean
   [k: string]: unknown
 }
 
@@ -253,6 +257,8 @@ export interface Settings {
   uiTemplateAuxModel: string
   /** UI 面板变量兜底补全的输出上限 token（思考模型的思考 token 也占此预算，默认 2000） */
   uiAuxMaxTokens: number
+  /** 整页面板托管重绘的输出上限 token（面板 HTML 很大，默认 16000） */
+  panelAuxMaxTokens: number
   /** 提示词预设条目（旧版 presets 模型）：有序、可启停、带角色 */
   promptEntries: PromptPreset[]
   lastActiveCharUuid?: string

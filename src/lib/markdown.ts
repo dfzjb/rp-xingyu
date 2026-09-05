@@ -96,8 +96,8 @@ export function renderHtml(text: string): string {
   return DOMPurify.sanitize(text || '', PURIFY_CONFIG)
 }
 
-/** 判定旧版式"整页 HTML"消息（用 sandbox iframe 渲染，不走 markdown） */
+/** 判定旧版式"整页 HTML"消息（用 sandbox iframe 渲染，不走 markdown）。先取头部再 trim，避免大消息全串复制 */
 export function isFullHtmlMessage(content: string): boolean {
-  const t = (content || '').trimStart().slice(0, 200).toLowerCase()
+  const t = (content || '').slice(0, 200).trimStart().toLowerCase()
   return t.startsWith('<!doctype html') || t.startsWith('<html')
 }

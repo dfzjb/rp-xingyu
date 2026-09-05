@@ -415,3 +415,30 @@ export function stripUiTemplateUpdates(text: string): string {
     .replace(OPEN_STRIP_RE, '')
     .trimEnd()
 }
+
+/**
+ * 整页面板托管：副模型重绘消息组（面板维护器）。
+ * 上一版面板 + 本轮剧情楼层 → 更新后的完整面板 HTML（结构/ID/CSS/JS 不变，只更新数据）。
+ */
+export function buildPanelRedrawMessages(
+  prevPanelHtml: string,
+  storyFloors: { role: 'user' | 'assistant'; name: string; content: string }[],
+): { role: 'system' | 'user'; content: string }[] {
+  if (!prevPanelHtml.trim() || !storyFloors.length) return []
+  const system = [
+    '你是旧版的UI面板维护器。用户消息提供「上一版状态面板HTML」和「之后的剧情正文」，你的任务是把面板更新到剧情之后的最新状态。',
+    '【硬性要求】',
+    '1. 只输出更新后的完整面板HTML（保持原 <!DOCTYPE html> 文档结构），不要任何解释、不要Markdown代码围栏、不要展开思考。',
+    '2. 保持原有整体结构、页签组织、元素 id/class、<style> 样式与 <script> 脚本原样保留，只修改受剧情影响的数据与状态（数字、日期、新闻条目、标签选中态等）。',
+    '3. 剧情未提及的字段一律原样保留上一版的值，严禁凭空改写或删除页签/功能。',
+    '4. 输出尽量紧凑：属性值与文本保持原样，不要额外美化、不要扩充内容。',
+    '5. 若剧情中出现了新的金额/日期/物品等事实，面板必须如实反映；剧情与面板冲突时以剧情为准。',
+  ].join('\n')
+  const floors = storyFloors
+    .map((f) => `[${f.role === 'user' ? '用户' : 'AI'}${f.name ? '·' + f.name : ''}]\n${f.content}`)
+    .join('\n\n')
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: `【上一版面板HTML】\n${prevPanelHtml}\n\n【之后的剧情正文】\n${floors}` },
+  ]
+}

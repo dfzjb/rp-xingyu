@@ -540,3 +540,46 @@ describe('buildPromptTrace 来源标注（P2-16）', () => {
     expect(trace[mergedIdx].origins).toEqual(['开场白（艾拉）', '开场白（艾拉）'])
   })
 })
+
+describe('整页面板托管（副模型接管 AI 自画面板）', () => {
+  const panel = '<!DOCTYPE html>\n<html><head><style>.p{color:red}</style></head><body><div>金库 <b>5000</b> 金币</div><script>var x=1;</script></body></html>'
+
+  it('激活时：整页 HTML 楼层以纯文本摘要发送，注入 Policy 与状态摘要，来源带托管标注', () => {
+    const c = char()
+    const nodes = chain(['用户提问', panel, '继续剧情'])
+    const { messages, trace } = buildPromptTrace(c, undefined, nodes, 20, {
+      aiPanelTakeover: true,
+      aiPanelDigest: '金库 5000 金币',
+    })
+    const sys = messages[0].content
+    expect(sys).toContain('[UI Panel Policy]')
+    expect(sys).toContain('严禁输出 <!DOCTYPE html>/<html> 整页文档')
+    expect(sys).toContain('【UI 面板当前状态】\n金库 5000 金币')
+    // 面板楼层 → 摘要：保留事实文本，剥掉标签/脚本，不再整段进上下文
+    const panelIdx = messages.findIndex((m) => m.role === 'assistant' && m.content.includes('金库'))
+    expect(panelIdx).toBeGreaterThan(-1)
+    expect(messages[panelIdx].content).not.toContain('<div')
+    expect(messages[panelIdx].content).not.toContain('var x=1')
+    expect(messages[panelIdx].content).toContain('金库 5000 金币')
+    expect(trace[panelIdx].origins.join('|')).toContain('托管面板摘要')
+    // 普通楼层不受影响
+    expect(messages.some((m) => m.content === '继续剧情')).toBe(true)
+  })
+
+  it('未激活时：整页 HTML 楼层原样透传，不注入 Policy', () => {
+    const c = char()
+    const { messages, trace } = buildPromptTrace(c, undefined, chain(['用户提问', panel, '继续剧情']), 20)
+    expect(messages[0].content).not.toContain('[UI Panel Policy]')
+    const panelIdx = messages.findIndex((m) => m.role === 'assistant' && m.content.includes('DOCTYPE'))
+    expect(panelIdx).toBeGreaterThan(-1)
+    expect(messages[panelIdx].content).toContain('<div>金库')
+    expect(trace[panelIdx].origins.join('|')).not.toContain('托管面板摘要')
+  })
+
+  it('开启但无状态摘要时不注入【UI 面板当前状态】块', () => {
+    const c = char()
+    const sys = buildPrompt(c, undefined, chain(['u', 'a']), 20, { aiPanelTakeover: true })[0].content
+    expect(sys).toContain('[UI Panel Policy]')
+    expect(sys).not.toContain('【UI 面板当前状态】')
+  })
+})

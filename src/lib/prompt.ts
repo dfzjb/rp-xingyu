@@ -15,7 +15,9 @@ import type { CharacterCard, MemoryEntry, MsgNode, Persona, PromptPreset } from 
 import { parseCot } from './cot'
 import { applyRegexScripts, PLACEMENT_AI_OUTPUT, PLACEMENT_USER_INPUT } from './regex'
 import { replaceMacros } from './macros'
+import { isFullHtmlMessage } from './markdown'
 import { resolveWorldInfo, DEFAULT_WI_RECURSION_STEPS, type WIPlacedEntry, type WorldInfoEntry } from './worldinfo'
+import { htmlToDigest } from './uitemplate'
 import type { UiTemplate } from './uitemplate'
 import { buildUiTemplateContextPrompt, buildUiTemplateUpdateInstruction } from './ui-template-state'
 import { builtinStateSyncRules, stripStateSyncBlocks, type StateSyncRule } from './state-sync'
@@ -53,14 +55,22 @@ export interface PromptOptions {
   stateSyncRules?: StateSyncRule[]
   /** 世界书递归激活步数（默认 0 对齐旧版不链式扩散；>0 时启用 ST 式递归） */
   worldInfoRecursion?: number
+  /** 整页面板托管激活：AI 楼层的整页 HTML 以纯文本摘要发送，不再整段进主模型上下文 */
+  aiPanelTakeover?: boolean
+  /** 托管面板当前状态摘要（来自会话 auxPanel），进 system 供主模型对齐金额/日期等事实 */
+  aiPanelDigest?: string
 }
 
-/** 节点正文（正则发送层已后置到组装末尾，此处只做：剥思维链 → 剥变量更新块 → 宏替换） */
+/** 节点正文（正则发送层已后置到组装末尾，此处只做：剥思维链 → 剥变量更新块 → 宏替换；
+ *  面板托管激活时 AI 楼层的整页 HTML 替换为纯文本摘要，避免大面板挤占主模型上下文） */
 function nodeBody(n: MsgNode, opts: PromptOptions, ctx: { charName: string; userName: string }): string {
   let main = parseCot(n.content || '').main
   // 缺省用内置规则兜底（含原生 <ui_template_updates>），传入卡级合并规则时按规则剥离
   main = stripStateSyncBlocks(main, opts.stateSyncRules ?? builtinStateSyncRules())
   main = replaceMacros(main, ctx)
+  if (opts.aiPanelTakeover && n.role !== 'system' && isFullHtmlMessage(main)) {
+    return htmlToDigest(main)
+  }
   return main.trim()
 }
 
@@ -183,6 +193,13 @@ function assemble(
     '[Style Priority]\n开场白和历史消息只用于理解剧情事实、人物关系和场景状态，不作为文风模板；不要继承或模仿开场白、前文回复的句式、语气密度、段落节奏或排版习惯。最终回复的文风必须优先遵守上方系统预设中的规定文风。',
   )
   sysMeta.push(['固定注入·[Style Priority]'])
+  // 整页面板托管策略（内置优先：压过卡内"每轮自画面板"的指令，主模型只写正文）
+  if (opts.aiPanelTakeover) {
+    sysBlocks.push(
+      '[UI Panel Policy]\n本卡的整页 HTML 状态面板已由系统托管：你的回复中严禁输出 <!DOCTYPE html>/<html> 整页文档或任何大型 HTML 面板，只输出剧情正文。面板由系统根据你的正文自动更新展示，你需要在正文中用文字明确交代面板关心的事实变化（金额、日期、新闻、状态切换等）。',
+    )
+    sysMeta.push(['固定注入·[UI Panel Policy]'])
+  }
   // [User Info]（对齐旧版格式与位置：Style Priority 之后）
   if (persona?.description?.trim() || persona?.name) {
     sysBlocks.push(`[User Info]\nName: ${persona?.name || ctx.userName}\nDescription: ${replaceMacros(persona?.description?.trim() || '', ctx)}`)
@@ -202,6 +219,12 @@ function assemble(
       sysBlocks.push(uiCtxPrompt)
       sysMeta.push(['UI 变量状态上下文'])
     }
+  }
+
+  // ── 托管面板当前状态摘要（主模型写剧情时对齐金额/日期等事实）──
+  if (opts.aiPanelTakeover && opts.aiPanelDigest?.trim()) {
+    sysBlocks.push(`【UI 面板当前状态】\n${opts.aiPanelDigest.trim()}`)
+    sysMeta.push(['托管面板状态摘要'])
   }
 
   // ── 记忆分配：绑定的挂 AI 消息后，未绑定的进 system 末尾 ──
@@ -296,10 +319,12 @@ function assemble(
     const floorLabel = n.parentId
       ? `历史楼层·${n.role === 'user' ? '用户' : 'AI'}（${n.name || ''}）`
       : `开场白（${n.name || character.name}）`
+    // 面板托管：整页 HTML 楼层已替换为纯文本摘要，标注便于 messages 预览排查
+    const isPanelDigest = !!opts.aiPanelTakeover && n.role !== 'system' && isFullHtmlMessage(n.content || '')
     out.push({
       role: n.role === 'user' ? 'user' : 'assistant',
       content: body,
-      _origins: [floorLabel],
+      _origins: [floorLabel + (isPanelDigest ? '·托管面板摘要' : '')],
     })
     // 绑定记忆（新站特性）：挂在对应 AI 楼之后；system 会打断后续同角色合并，与旧版语义不冲突
     const mems = memAfterNode.get(n)

@@ -10,9 +10,10 @@ import { distillMemoriesFromChat, backfillMemories, searchVectorMemories, autoIn
 import { mergeNpcEvalResults, listNpcAffinities, affinityScore, deriveStage } from '../lib/affinity'
 import { parseCot } from '../lib/cot'
 import { recordUsage } from '../lib/usage'
-import { normalizeUiTemplates } from '../lib/uitemplate'
-import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseAuxPayload } from '../lib/ui-template-state'
+import { normalizeUiTemplates, htmlToDigest, validatePanelHtml } from '../lib/uitemplate'
+import { applyUiTemplateUpdates, buildAuxAnalysisMessages, parseAuxPayload, buildPanelRedrawMessages } from '../lib/ui-template-state'
 import { pickLightModel } from '../lib/aux-model'
+import { isFullHtmlMessage } from '../lib/markdown'
 import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates, stripStateSyncBlocks } from '../lib/state-sync'
 import { useCharactersStore } from './characters'
 import { usePersonasStore } from './personas'
@@ -304,6 +305,7 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 进行中的副模型模板分析（会话级去重，防止连发时叠调用） */
   const auxAnalysisRunning = new Set<string>()
+  const panelRedrawRunning = new Set<string>()
 
   /**
    * 副模型兜底分析（旧版"副模型分析"语义）：主模型回复未携带变量更新块时，
@@ -412,6 +414,75 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 整页面板托管：副模型按最新剧情重绘 AI 自画的面板（自动识别激活）。
+   * 模型选择链与变量补全一致（手动指定 > 记忆副模型 > 自动 flash > 主模型）；
+   * 输出经 validatePanelHtml 校验，失败/截断沿用上一版，保证面板永不消失。
+   */
+  async function runPanelRedraw(s: ChatSession, path: MsgNode[]) {
+    const settings = useSettingsStore()
+    const chars = useCharactersStore()
+    const char = chars.list.find((c) => c.uuid === s.charUuid)
+    if (!char || char.uiPanelAuxTakeover === false) return
+    const prev = s.auxPanel?.html
+    if (!prev) return
+    if (panelRedrawRunning.has(s.id)) return
+    const explicitAux = settings.settings.uiTemplateAuxModel || settings.settings.memoryAuxModel
+    let modelCache = settings.modelsCache
+    if (!explicitAux && (!modelCache || modelCache.length === 0)) {
+      try {
+        modelCache = (await settings.refreshModels()) || settings.modelsCache
+      } catch {
+        modelCache = settings.modelsCache
+      }
+    }
+    const auxModel = explicitAux || pickLightModel(modelCache, settings.activeModel)
+    const auxKind = explicitAux ? 0 : auxModel && auxModel !== settings.activeModel ? 1 : 2
+    const cfg: ApiConfig = {
+      baseUrl: settings.settings.apiBaseUrl,
+      apiKey: settings.settings.apiKey,
+      model: auxModel || settings.activeModel,
+      temperature: 0.3,
+      maxTokens: Number(settings.settings.panelAuxMaxTokens) || 16000,
+      reasoningEffort: auxKind === 1 ? 'none' : 'minimal',
+    }
+    if (!cfg.apiKey) return
+    if (!cfg.model) {
+      setUiTplStatus('skip', '托管面板：未选择模型，沿用上一版')
+      return
+    }
+    // 剧情楼层：面板托管激活后整页 HTML 楼层不参与（面板本体由上一版提供）
+    const storyFloors = path
+      .slice(-6)
+      .filter((n) => n.role === 'user' || !isFullHtmlMessage(n.content || ''))
+      .map((n) => ({
+        role: n.role === 'user' ? ('user' as const) : ('assistant' as const),
+        name: n.name || '',
+        content: parseCot(n.content || '').main.slice(0, 4000),
+      }))
+      .filter((f) => f.content.trim())
+    const messages = buildPanelRedrawMessages(prev, storyFloors)
+    if (!messages.length) return
+    panelRedrawRunning.add(s.id)
+    const who = auxKind === 0 ? '副模型' : auxKind === 1 ? '轻量模型' : '主模型'
+    setUiTplStatus('running', `托管面板：${who}重绘中…`)
+    try {
+      const raw = await chatOnce(cfg, messages)
+      const html = parseCot(raw).main.trim()
+      if (validatePanelHtml(html)) {
+        s.auxPanel = { html, updatedAt: Date.now() }
+        setUiTplStatus('ok', `托管面板：${who}已重绘`)
+      } else {
+        setUiTplStatus('skip', '托管面板：重绘结果无效或被截断，沿用上一版')
+      }
+    } catch (err) {
+      setUiTplStatus('error', `托管面板：重绘失败（${(err as Error)?.message || '未知错误'}），沿用上一版`)
+    } finally {
+      panelRedrawRunning.delete(s.id)
+      await persist(s)
+    }
+  }
+
+  /**
    * 组装注入用记忆（主发送/续写同源，回归 R3）：向量模式按最近对话检索语义相关条目，
    * 检索失败或未配 embedding 时回退全量总结条目（原文分片 chunk 不走全量注入）。
    */
@@ -482,6 +553,11 @@ export const useChatStore = defineStore('chat', () => {
     } catch {
       /* 无好感度数据不阻塞 */
     }
+    // 整页面板托管（自动识别）：卡开关开启 && 会话出现过整页 HTML 面板消息（自举后由 auxPanel 承续）。
+    // 普通卡两个条件都不满足，不注入任何面板相关指令，零影响。
+    const aiPanelTakeover =
+      char.uiPanelAuxTakeover !== false &&
+      (!!s.auxPanel || path.some((n) => n.role === 'assistant' && isFullHtmlMessage(n.content || '')))
     const { messages, trace } = buildPromptTrace(char, persona, path, settings.settings.contextMessages, {
       regexScripts: char.regexScripts,
       regexEnabled: settings.settings.regexEnabled !== false,
@@ -494,6 +570,8 @@ export const useChatStore = defineStore('chat', () => {
       uiTemplateStates: uiStates,
       stateSyncRules: syncRules,
       uiMainModelUpdates: settings.settings.uiTemplateMainModelUpdates,
+      aiPanelTakeover,
+      aiPanelDigest: aiPanelTakeover && s.auxPanel ? htmlToDigest(s.auxPanel.html) : undefined,
     })
     return { char, persona, settings, uiTpls, uiStates, syncRules, messages, trace }
   }
@@ -610,6 +688,16 @@ export const useChatStore = defineStore('chat', () => {
       // 主模型可能只改部分字段或更新块被 max_tokens 截断，补全结果与主模型更新做并集深合并
       if (uiTpls.length && settings.settings.uiTemplateAuxAnalysis !== false) {
         void runAuxTemplateAnalysis(s, node, path, uiTpls, effective)
+      }
+
+      // 整页面板托管（自动识别）：模型自画了整页 HTML → 收编为托管面板（自举/自愈）；
+      // 已有托管面板且本轮是正文 → 副模型按最新剧情重绘
+      if (char.uiPanelAuxTakeover !== false) {
+        if (isFullHtmlMessage(node.content)) {
+          s.auxPanel = { html: node.content, updatedAt: Date.now() }
+        } else if (s.auxPanel) {
+          void runPanelRedraw(s, [...path, node])
+        }
       }
 
       // 用量统计：最后一条用户消息正文为发送口径
@@ -828,6 +916,14 @@ export const useChatStore = defineStore('chat', () => {
         // 每轮轻量补全兜底（与主模型更新并集合并；开关在 runAuxTemplateAnalysis 内判定）
         if (uiTpls.length && settings.settings.uiTemplateAuxAnalysis !== false) {
           void runAuxTemplateAnalysis(s, lastAi, chain, uiTpls, effective)
+        }
+        // 整页面板托管（自动识别，与主发送同源）：续写后同样重绘面板
+        if (char.uiPanelAuxTakeover !== false) {
+          if (isFullHtmlMessage(lastAi.content)) {
+            s.auxPanel = { html: lastAi.content, updatedAt: Date.now() }
+          } else if (s.auxPanel) {
+            void runPanelRedraw(s, chain)
+          }
         }
         // 用量统计：续写无新用户输入，发送口径计 0
         void recordUsage(0, Math.max(0, lastAi.content.length - baseLen))

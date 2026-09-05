@@ -93,6 +93,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // 面板兜底补全的输出上限：默认自动改用 flash 非思考模型（无思考 token 占用），
   // 实测大面板一次改 60~80 字段约 1500 token，默认 2500 留足余量
   uiAuxMaxTokens: 3000,
+  // 整页面板托管重绘的输出上限（面板 HTML 很大，截断则沿用上一版）
+  panelAuxMaxTokens: 16000,
   promptEntries: [],
 }
 

@@ -296,6 +296,40 @@ body>div:first-child{margin:0!important;max-width:100%!important;height:auto!imp
 /** iframe sandbox 权限（对齐旧版 htmlIframeSandbox） */
 export const HTML_IFRAME_SANDBOX = IFRAME_SANDBOX
 
+/**
+ * 整页 HTML → 纯文本摘要（托管面板发给主模型用）：
+ * 剥 <style>/<script> 与全部标签、并空白，保留新闻/金额等事实文本，超长截断。
+ */
+export function htmlToDigest(html: string, cap = 2000): string {
+  let text = String(html || '')
+  text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+  text = text.replace(/<br\s*\/?>/gi, ' ').replace(/<\/(p|div|li|tr|h[1-6]|option|select)>/gi, ' ')
+  text = text.replace(/<[^>]+>/g, ' ')
+  text = text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+  text = text.replace(/\s+/g, ' ').trim()
+  return text.length > cap ? text.slice(0, cap) + '…' : text
+}
+
+/**
+ * 校验副模型重绘输出的面板 HTML：接受完整文档或较大的容器片段；
+ * 拒绝空输出/纯文本/明显残缺（截断保护，失败沿用上一版面板）。
+ */
+export function validatePanelHtml(raw: string, finishLength = false): boolean {
+  const t = String(raw || '').trim()
+  if (t.length < 200) return false
+  const head = t.slice(0, 300).toLowerCase()
+  const looksLikeHtml = head.startsWith('<!doctype') || head.startsWith('<html') || /^<(div|section|main|body)/.test(head)
+  if (!looksLikeHtml) return false
+  // 截断输出通常连闭合标签都缺失，且远短于正常面板；长度与标签配对都不满足即拒绝
+  if (finishLength && !/<\/html>/i.test(t) && !/<\/(div|section|body)>/i.test(t.slice(-200))) return false
+  return true
+}
+
 /** 裸 HTML 片段 / 完整文档 → iframe srcdoc 文档（带重置样式与高度自适配） */
 export function buildHtmlDocument(rawHtml: string): string {
   const shim = HEIGHT_SHIM + RESET_STYLE

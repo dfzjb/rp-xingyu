@@ -92,6 +92,24 @@ const htmlAutoExpand = computed(() => chat.currentSession?.activeNodeId === prop
 const htmlUserToggled = ref<boolean | null>(null)
 const htmlExpanded = computed(() => (isHtml.value ? (htmlUserToggled.value ?? htmlAutoExpand.value) : false))
 
+// ── 整页面板托管：会话级 auxPanel（副模型每轮重绘）渲染在最后一条已完成 AI 楼下 ──
+const auxPanelUserToggled = ref<boolean | null>(null)
+const auxPanelExpanded = computed(() => auxPanelUserToggled.value ?? true)
+const auxPanelDoc = computed(() => {
+  const s = chat.currentSession
+  const html = s?.auxPanel?.html
+  if (!html) return ''
+  const char = characters.list.find((c) => c.uuid === s.charUuid)
+  if (!char || char.uiPanelAuxTakeover === false) return ''
+  let lastAiId = ''
+  for (const n of chat.chain) if (n.role === 'assistant' && !n.streaming) lastAiId = n.id
+  if (!lastAiId || lastAiId !== props.node.id || props.node.streaming) return ''
+  // 本楼本身就是整页面板消息时不再重复挂（自举/模型不听话的楼层走 isHtml 路径显示）
+  if (isFullHtmlMessage(stripStateSyncBlocks(props.node.content || '', syncRules.value))) return ''
+  return buildHtmlDocument(html)
+})
+const auxPanelSize = computed(() => chat.currentSession?.auxPanel?.html.length || 0)
+
 const cotOpen = ref(false)
 const reasoningOpen = ref(false)
 
@@ -190,6 +208,25 @@ const lightbox = defineModel<{ src: string } | null>('lightbox', { default: null
         <!-- UI 模板块：bottom 位置 -->
         <template v-if="tplBottom.length">
           <div class="ui-tpl-block" v-html="tplBottom.join('')" />
+        </template>
+
+        <!-- 托管面板（整页 HTML 面板由副模型维护）：挂在最后一条已完成 AI 楼下方 -->
+        <template v-if="auxPanelDoc">
+          <button v-if="!auxPanelExpanded" class="btn sm html-toggle" @click="auxPanelUserToggled = true">
+            <ChevronDown :size="13" /> 展开 UI 面板（托管 · {{ auxPanelSize }} 字）
+          </button>
+          <template v-else>
+            <button class="btn sm html-toggle" @click="auxPanelUserToggled = false">
+              <ChevronUp :size="13" /> 收起 UI 面板（托管 · {{ auxPanelSize }} 字）
+            </button>
+            <iframe
+              class="html-frame"
+              :sandbox="htmlSandbox"
+              scrolling="no"
+              :srcdoc="auxPanelDoc"
+              title="UI 面板（副模型托管）"
+            />
+          </template>
         </template>
 
         <!-- 图片附件 -->
