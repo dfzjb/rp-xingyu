@@ -1,125 +1,135 @@
-# RP · 星屿（rp-site）
+**中文** | [English](./README.en.md)
 
-本地优先的 AI 角色扮演站点：**所有数据只存在你的浏览器里**，服务器零用户数据。
-Vue 3 + TypeScript + Vite + Pinia + Dexie(IndexedDB)，UI 基于 Naive UI + 自定义设计系统。
+# RP · 星屿
 
-## 功能一览
+<p align="center">
+  <img src="docs/images/home-light.png" alt="RP · 星屿 主界面" width="880" />
+</p>
 
-- **对话**：SSE 流式、思维链折叠、树式消息（重 roll 生成兄弟分支，历史不丢）、楼层/字数统计、图片附件、旧版 HTML 消息沙箱渲染
-- **角色卡**：SillyTavern PNG/JSON 导入导出（v2/v3 兼容）；备选开场白、示例对话、system_prompt / post_history_instructions 覆盖；可视化世界书编辑器与正则脚本编辑器
-- **记忆系统**：会话记忆条目 + AI 提炼最近剧情 + 自动巡逻提炼；按旧版语义绑定到 AI 消息后注入
-- **好感度**：六维三轴关系模型（兴趣↔厌烦、信任↔尴尬、吸引↔反感，对轴此消彼长）+ 雷达图可视化 + 9 段关系阶段推导，状态行自动注入提示词
-- **预设**：内置旧版同款预设条目（防抢话/防神化/防重复等），可自建带角色的提示词条目
-- **导入 / 导出**：与旧版同构的 `legacy_backup_*.json` 备份互导；酒馆 JSONL 聊天记录导入；全库完整备份
-- **角色卡广场**：从可配置的远程索引浏览并一键导入分享卡；自建广场服务可让用户直接上传自己的卡
-- **在线跑团**：多人房间 + AI 主持（KP）+ 表达式骰子；中继端到端加密、零存储，战役只存房主浏览器
-- **主题**：深色 / 浅色一键切换
+[![CI](https://github.com/dfzjb/rp-xingyu/actions/workflows/ci.yml/badge.svg)](https://github.com/dfzjb/rp-xingyu/actions/workflows/ci.yml)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](./LICENSE)
+![Vue 3](https://img.shields.io/badge/Vue-3-42b883.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)
+![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen.svg)
 
-## 开发
+**本地优先的 AI 角色扮演 Web 应用**：所有数据只存在你的浏览器里——服务器零用户数据、无账号、无遥测。兼容 SillyTavern 角色卡生态，内置记忆系统、世界书、正则脚本、好感度引擎、交互式 UI 模板、卡片广场与端到端加密的多人在线跑团。
+
+- 💾 **本地优先**：角色卡、聊天记录、API Key 全部存于浏览器 IndexedDB，清空浏览器 = 数据清空，随时一键备份/恢复
+- 🔌 **模型自由**：浏览器直连任何 OpenAI 兼容 API（官方/中转/本地均可），主对话、记忆副模型、图片与视频生成模型独立配置
+- 🌐 **纯静态**：构建产物可部署到任意静态托管的任意子路径，甚至双击 `dist/index.html` 直接使用
+
+**在线体验**：[rp.dfzjb.site/new](https://rp.dfzjb.site/new/) （站主实例，自带 API Key 即可直接使用）
+
+## ✨ 功能一览
+
+### 💬 对话
+- SSE 流式回复，思维链（CoT）自动折叠，正文与推理分离渲染
+- **消息树**：重 roll 生成兄弟分支而非覆盖，分支自由切换，历史永不丢失
+- 消息编辑/删除/续写/代入（以角色身份发送）、临时规范指令、图片附件
+- 三模型槽位（主/备 A/备 B）顶栏快捷切换；温度、推理强度、上下文滑窗实时可调
+- 楼层/字数统计、聊天记录全文搜索定位、聊天背景（角色封面 + 浓度/模糊）
+- AI 输出与迁移的 HTML 消息经 DOMPurify 消毒后在沙箱 iframe 安全渲染
+- 「messages 预览」调试面板：逐条查看最终发给模型的 messages 及其来源标签（预设/世界书/前奏/楼层/注入指令），排查"模型为什么这么想"
+
+### 🗂 角色卡
+- SillyTavern v2/v3 PNG（tEXt chunk）/JSON 导入导出，与酒馆生态互通
+- 备选开场白、示例对话、system_prompt / post_history_instructions 覆盖、变量回写规则
+
+### 🧠 记忆系统（总结 / 向量双引擎，滑块切换）
+- **总结模式**：副模型分块提炼记忆条目，全量注入上下文
+- **向量模式**：走 `/v1/embeddings` 语义检索，余弦相似度 Top-K 按轮注入
+- 每轮自动入库 + 20 楼自动巡逻提炼 + 历史并发补录 + 保留最近 N 楼原文
+
+### 🌍 世界书 & 正则
+- 世界书可视化编辑器：ST 语义兼容（AND/OR/NOT 过滤、概率触发、扫描深度、递归激活、@深度注入、七种插入位置）
+- 正则脚本：显示层 + 发送层双作用域，可视化启停排序，`(?i)(?s)(?m)` 内联修饰符、深度定向、代码块/HTML 保护
+
+### 💗 好感度 Behavior Engine
+- 六维三轴关系模型（兴趣↔厌烦、吸引↔反感、信任↔尴尬，0-100，对轴此消彼长）
+- 9 段关系阶段（挚爱→敌对）+ 冲突联动；AI 每轮自主评判并与旧值平滑合并防跳变
+- 纯 SVG 雷达图可视化；关系状态自动注入提示词约束角色言行；支持多 NPC 按"会话+角色名"建档
+
+### 🎛 UI 模板引擎
+- 角色卡可自带交互式 HTML 面板（手机 UI / 状态栏 / 仪表盘），`{{变量}}` / `{{#each}}` 模板语法，沙箱 iframe 渲染
+- AI 回复实时驱动面板变量更新；整页 HTML 面板可交由副模型每轮重绘，主模型保持纯扮演
+
+### 🛠 AI 工作台
+- 一段自然语言让 AI 生成角色卡 / 世界书条目 / 正则脚本 / UI 模板，可编辑后入库
+
+### 📜 预设
+- 内置 15 条实战预设（破限、防抢话、防神化、防重复、文风、时间戳、人称视角……），强制存在、可启停、一键重置
+- 自建带角色的有序条目；预设面板内置条目防误删
+
+### 🛒 卡片广场
+- 浏览远程卡池一键导入；开放上传（先审后上架）；站主凭管理口令解锁审核后台
+- 自建广场服务零依赖（node:http），详见 [docs/plaza-server.md](./docs/plaza-server.md)
+
+### 🎲 在线跑团
+- 多人房间 + AI 担任 KP，玩家各饰一角；表达式骰子（1d20、2d6+3…）全员可见
+- 规则系统：自由团 / COC7th / DND5e / 自定义；简洁/详细两种开团模式（KP 风格、模组梗概、内容红线等）
+- 端到端加密：房间消息在浏览器内用房间码派生密钥加密，中继只见密文、**零存储零日志**；战役只存房主浏览器，可一键恢复重开
+
+### 🔄 数据管理
+- `legacy_backup_*.json` 全库备份导入导出（与旧版同构互导）；酒馆 JSONL 聊天记录导入；用量统计
+
+## 🖼 界面预览
+
+| 深色模式 | 记忆系统 |
+|---|---|
+| ![深色模式](docs/images/home-dark.png) | ![记忆系统](docs/images/memory.png) |
+| **卡片广场** | **在线跑团** |
+| ![卡片广场](docs/images/plaza.png) | ![在线跑团](docs/images/hall.png) |
+
+## 🏗 架构
+
+```mermaid
+graph LR
+    B["🌐 浏览器 SPA<br/>Vue 3 + Pinia + Dexie<br/>全部用户数据存 IndexedDB"]
+    B <-- "浏览器直连<br/>OpenAI 兼容 API (SSE)" --> A["🤖 你的 API"]
+    B <-- "角色卡清单/上传/审核" --> P["🛒 广场服务<br/>server/plaza.js"]
+    B <-- "E2EE 密文转发<br/>零存储零日志" --> R["🎲 跑团中继<br/>server/index.js (ws)"]
+```
+
+服务器**永远不接触**你的对话内容与 API Key：跑团消息端到端加密，广场只托管角色卡文件与待审队列。纯静态部署时只跑前端，两个服务组件按需自建。
+
+## 🚀 快速开始
 
 ```bash
+git clone https://github.com/dfzjb/rp-xingyu.git
+cd rp-xingyu
 npm install
 npm run dev        # http://127.0.0.1:5273
-npm run build      # 产物在 dist/，base='./' 支持任意子路径部署
+```
+
+打开「更多 → 语言模型」填入你的 API Base URL 与 Key（仅存本机浏览器），「获取模型列表」选择模型后即可开始对话。
+
+## 📦 部署
+
+- **任意静态托管**：`npm run build` → `dist/`（`base: './'`，支持任意子路径，也可双击 index.html 离线使用）
+- **GitHub Pages**：仓库已内置 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)——推送到 main 自动构建发布；仓库 Settings → Pages → Source 选 **GitHub Actions** 即可
+- **自建服务组件**（可选）：在线跑团中继 `npm run server`（唯一依赖 ws，端口 8787）、广场服务 `npm run plaza`（零依赖，端口 8788）；生产环境建议 systemd + nginx 反代，参见 [docs/plaza-server.md](./docs/plaza-server.md) 与 `deploy/`
+
+## 🔄 从 旧版 旧版迁移
+
+旧版用户可在「导入 / 导出」页选择 `legacy_backup_*.json` 一键恢复全部角色卡与聊天记录；新站导出的备份同样可被旧版导入，双向互通。
+
+## 🧪 测试
+
+```bash
+npm test           # Vitest，304 项单元测试（引擎层 / db 持久化 / 跑团 / 广场服务 / 旧版迁移）
 npm run typecheck  # vue-tsc 类型检查
-npm test           # Vitest 单元测试（165 项，覆盖引擎层、db 持久化、跑团、广场服务与旧版迁移）
 ```
 
-## CI
+## 📄 许可证
 
-仓库内置两个 GitHub Actions 工作流：
+本项目以 [CC BY-NC 4.0](./LICENSE)（署名-非商业性使用 4.0 国际）协议发布。内置预设文本沿用旧版 旧版（CC BY-NC 4.0 © ）的文本资源。
 
-- `.github/workflows/ci.yml`：push / PR 时执行类型检查 + 单元测试 + 生产构建
-- `.github/workflows/deploy.yml`：main 分支推送时执行上述检查并自动发布 GitHub Pages
+## 🙏 致谢
 
-## 部署到 GitHub Pages
+- [SillyTavern](https://github.com/SillyTavern/SillyTavern) —— 角色卡生态与设计思路参考
+- Artemis —— 设计思路借鉴
+- 旧版 旧版（© ）—— 内置预设文本来源与本项目的直接前身
 
-1. 将本仓库推送到 GitHub（公开仓库可直接使用 Pages）。
-2. 仓库 Settings → Pages → Source 选择 **GitHub Actions**。
-3. 推送到 main 即自动构建并发布（工作流已在 `.github/workflows/deploy.yml` 内置）。
+## ⚠️ 免责声明
 
-`base: './'` 已配置好，任意子路径（`https://用户名.github.io/仓库名/`）均可直接运行。
-
-## 角色卡广场
-
-广场是一个静态 JSON 清单（默认读取本仓库 `public/plaza/index.json`），格式：
-
-```json
-[
-  { "name": "卡名", "description": "简介", "tags": ["标签"], "url": "cards/xxx.json" }
-]
-```
-
-- `url` 指向 SillyTavern v2/v3 卡 JSON 或 PNG（相对 index.json 所在目录或任意绝对地址）
-- 前端默认从站主广场服务拉取清单；在「广场后台 → 广场索引地址」改成你自己的清单地址即可接入任何卡池
-
-### 自建广场：上传 API
-
-想让别人把卡传到你的广场，用仓库内置的广场服务（零依赖，node:http）：
-
-```bash
-npm run plaza                    # http://0.0.0.0:8788，托管 <仓库>/public/plaza
-PLAZA_PORT=9000 PLAZA_DIR=/data/plaza PLAZA_TOKEN=口令 npm run plaza   # 全部可选
-```
-
-- `GET /plaza/index.json`、`GET /plaza/cards/*`：清单与卡片（即前端订阅的静态索引）
-- `POST /plaza/api/cards`：上传。请求体 `{ filename, data(base64), name, description, tags }`，服务端校验扩展名/PNG 签名/JSON 合法性与大小（≤6MB），重名自动加序号后写入 `cards/` 并追加进 `index.json`
-- `GET /plaza/api/ping`：探活（前端配置完地址可先试一下）
-- `POST /plaza/api/cards`：**开放上传，无需口令**。卡进入待审区（`pending/`，不公开、不进清单），前端提示"已提交审核"
-- `GET /plaza/api/review`、`GET /plaza/api/review/<id>`：管理口令 → 待审列表 / 取待审卡原文件（审前人工检查）
-- `POST /plaza/api/approve` / `POST /plaza/api/reject`：管理口令 → 上架（移入 `cards/` 并写进清单）/ 拒绝删除
-- `POST /plaza/api/remove`：管理口令 → 下架已上架卡（上架后发现违规的刹车）
-- `PLAZA_TOKEN` 是**管理口令**（审核与下架凭据，与上传无关），**生产必配**——否则陌生人传的卡永远无法上架
-- 内容安全三件套：开放上传但先审后上架、每 IP 上传限速（默认 60 次/小时，`PLAZA_RATE_PER_HOUR` 可调）、待审队列上限（默认 200，`PLAZA_MAX_PENDING` 可调）
-- 前端「卡片广场」页：**用户零配置**——浏览/导入/开放上传开箱即用（默认地址内置在 `src/db.ts` 的 `DEFAULT_SETTINGS`，指向站主服务器；自部署到其他域名需同步修改）
-- 站主从「**更多 → 管理员口令**」进入：输入服务器 `PLAZA_TOKEN` 校验通过即进入**广场后台**（独立页面）——配置索引/上传地址、审核待审卡（通过上架 / 拒绝 / 试卡——先把待审卡导入本地试玩再决定）、已上架卡一键下架；口令只存本机浏览器，侧边栏无任何后台入口
-- 前端「上传接口地址」填 `http://<host>:8788/plaza/api/cards`；卡片是公开资源，跨域（CORS）已放开
-
-#### 部署到自有服务器（示例 dfzjb.site）
-
-```bash
-# 1. 服务器上取代码 + 装依赖（server 无构建需求）
-git clone <本仓库> /opt/rp-site && cd /opt/rp-site && npm ci --omit=dev
-
-# 2. 修改 deploy/plaza.service 里的 PLAZA_TOKEN（必改）与路径，然后装成系统服务
-sudo cp deploy/plaza.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now rp-plaza
-
-# 3. 把 deploy/nginx-plaza.conf 的 location /plaza/ 片段粘进 server{}，放宽 body 上限后重载
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-- 防火墙**不要**放行 8788，只走 nginx 的 443（X-Forwarded-For 是限速与下架审计的来源依据）
-- 前端配置：用户无需任何配置（默认地址已内置指向 dfzjb.site）；站主在「更多 → 管理员口令」输入 `PLAZA_TOKEN` 解锁广场后台，即可审核上架/拒绝/下架
-- 备份 = 打包 `PLAZA_DIR`（`index.json` + `cards/`）一个目录
-
-## 从旧版迁移
-
-旧版用户可在新站「导入 / 导出」页选择 `legacy_backup_*.json` 一键恢复全部角色卡与聊天记录；
-新站导出的备份文件同样可以被旧版导入。
-
-## 在线跑团（server/）
-
-多人在线跑团：AI 担任 KP，玩家各饰一角；房间消息端到端加密（房间码即密钥），中继服务器**零存储、零日志**，战役只存在房主浏览器 IndexedDB。
-
-大厅工具栏「模型」= 跑团**模型设置**：可为 KP 单独配一套 API（只对在线跑团生效，主站对话不受影响）；不配置时自动使用「更多 → 语言模型」的当前模型。中继地址与世界观备注收在该弹窗的「高级」折叠区。
-
-工具栏下方右侧是常驻的「**我的团**」面板：列出你开过的战役（封面/房间码/剧情条数，保存在**本机浏览器 IndexedDB**，退出不丢、服务器零存储），可一键恢复进房（沿用原房间码与密码）或删除；头部「保留 − N ＋」可自选只保留最近 N 场（0 = 全部保留，超出自动清理最旧的）。创建房间弹窗顶部也保留最近 3 场的快捷恢复。「创建房间」始终开**全新战役**，恢复只走面板或弹窗顶部的恢复入口。
-
-创建房间支持**简洁 / 详细**两种模式（弹窗顶部滑块切换，选择记在本机）：
-
-- **简洁**：房间名 + 简介 + 封面 + 上锁密码，够开一桌自由团；
-- **详细**：完整开团设定——规则系统（自由团 / COC7th / DND5e / 自定义，含各规则的检定约定与快捷骰）、时代背景、自定义基调标签、人数、KP 风格、世界观与舞台、模组梗概（KP 秘密）、开场场景、开场白（建团后自动作为第一段旁白发到剧情流）、关键 NPC、房规、内容红线（这三项均逐条添加、随意删减）、场景/地图备注。设定只进 KP 提示词与战役存档（E2EE 同步给成员查看），不经过中继；AI 辅助可从一句话构想生成全套设定。
-
-```bash
-npm run server     # 中继 ws://127.0.0.1:8787（仅一个依赖：ws）
-```
-
-- 开发模式（`npm run dev`）已把 `/ws` 代理到 8787，开箱即用；
-- 生产部署时把 `/ws` 反代到中继进程（nginx `proxy_set_header Upgrade`），或在前端设置里填中继地址；
-- GitHub Pages 等纯静态托管只包含前端，中继需要自己找台服务器跑。
-
-## 测试工具（tools/）
-
-- `mock_legacy_server.py`：本地模拟旧版迁移接口 + 假 OpenAI SSE API（联调用）
-- `.browser-regress.mjs`、`sse_test_page.html`：浏览器回归辅助
+本项目是虚构创作工具，角色扮演内容由 AI 模型生成，不代表开发者立场。请在遵守你所在地区法律法规及模型服务商使用条款的前提下使用；对配置的模型、提示词与生成内容自行负责。
