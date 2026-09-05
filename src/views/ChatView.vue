@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Menu, Plus, Trash2, SendHorizontal, Square, ImagePlus, MoonStar, BrainCircuit, Heart, Sparkles, Play, UserRound, Search } from 'lucide-vue-next'
+import { Menu, Plus, Trash2, SendHorizontal, Square, ImagePlus, MoonStar, BrainCircuit, Heart, Sparkles, Play, UserRound, Search, Ellipsis } from 'lucide-vue-next'
 import { NSelect } from 'naive-ui'
 import { useChatStore } from '../stores/chat'
 import { useCharactersStore } from '../stores/characters'
@@ -29,6 +29,17 @@ const pendingInstructionOpen = ref(false)
 const searchOpen = ref(false)
 const searchText = ref('')
 const searchResults = ref<{ sessionId: string; sessionName: string; nodeId: string; floor: number; text: string }[]>([])
+
+// 移动端顶栏「⋯」菜单：收纳被屏幕空间挤掉的会话操作
+const headerMenuOpen = ref(false)
+function onDocClick(e: Event) {
+  const t = e.target as HTMLElement | null
+  if (!t?.closest('.header-menu') && !t?.closest('.header-more')) headerMenuOpen.value = false
+}
+function headerMenuAction(fn: () => void) {
+  fn()
+  headerMenuOpen.value = false
+}
 
 function doSearch() {
   const q = searchText.value.trim().toLowerCase()
@@ -154,8 +165,14 @@ function onIframeMessage(e: MessageEvent) {
   void chat.send(text).then(() => scrollToBottom())
 }
 
-onMounted(() => window.addEventListener('message', onIframeMessage))
-onUnmounted(() => window.removeEventListener('message', onIframeMessage))
+onMounted(() => {
+  window.addEventListener('message', onIframeMessage)
+  document.addEventListener('click', onDocClick)
+})
+onUnmounted(() => {
+  window.removeEventListener('message', onIframeMessage)
+  document.removeEventListener('click', onDocClick)
+})
 
 function pickImages() {
   fileInput.value?.click()
@@ -308,36 +325,44 @@ function onModelChange(v: string) {
         </div>
       </div>
       <div class="actions">
-        <NSelect
-          :value="currentModelValue"
-          size="small"
-          filterable
-          tag
-          :options="modelOptions"
-          :placeholder="settings.activeModel || '选择模型'"
-          style="width: 180px"
-          @update:value="onModelChange"
-        />
-        <NSelect
-          :value="chat.currentSessionId"
-          size="small"
-          filterable
-          :options="sessionOptions"
-          style="width: 160px"
-          @update:value="onSessionChange"
-        />
+        <div class="header-selects">
+          <NSelect
+            :value="currentModelValue"
+            size="small"
+            filterable
+            tag
+            :options="modelOptions"
+            :placeholder="settings.activeModel || '选择模型'"
+            @update:value="onModelChange"
+          />
+          <NSelect
+            :value="chat.currentSessionId"
+            size="small"
+            filterable
+            :options="sessionOptions"
+            @update:value="onSessionChange"
+          />
+        </div>
         <button class="btn sm hide-sm" title="搜索聊天记录" @click="searchOpen = !searchOpen"><Search :size="14" /></button>
         <button class="btn sm hide-sm" title="好感度 · 关系状态" @click="emit('goto', 'affinity')"><Heart :size="14" /></button>
         <button class="btn sm hide-sm" title="会话记忆" @click="memoryShow = true"><BrainCircuit :size="14" /></button>
         <button class="btn sm hide-sm" @click="newSession"><Plus :size="14" />会话</button>
         <button class="btn sm danger hide-sm" @click="deleteCurrentSession"><Trash2 :size="14" />删会话</button>
+        <button class="btn sm header-more" title="会话操作" @click="headerMenuOpen = !headerMenuOpen"><Ellipsis :size="15" /></button>
+        <div v-if="headerMenuOpen" class="header-menu" @click.stop>
+          <button @click="headerMenuAction(() => { searchOpen = !searchOpen })"><Search />搜索聊天记录</button>
+          <button @click="headerMenuAction(() => emit('goto', 'affinity'))"><Heart />好感度 · 关系状态</button>
+          <button @click="headerMenuAction(() => { memoryShow = true })"><BrainCircuit />会话记忆</button>
+          <button @click="headerMenuAction(() => newSession())"><Plus />新建会话</button>
+          <button class="danger" @click="headerMenuAction(() => deleteCurrentSession())"><Trash2 />删除当前会话</button>
+        </div>
       </div>
     </header>
 
     <!-- 搜索面板 -->
     <div v-if="searchOpen" class="card-panel" style="margin: 0 12px 8px; padding: 12px">
       <div style="display: flex; gap: 8px">
-        <input v-model="searchText" class="input" style="flex:1; font-size:0.82rem" placeholder="搜索聊天记录…" @keydown.enter="doSearch" />
+        <input v-model="searchText" class="input" style="flex:1" placeholder="搜索聊天记录…" @keydown.enter="doSearch" />
         <button class="btn sm primary" @click="doSearch"><Search :size="13" /></button>
       </div>
       <div v-if="searchResults.length" style="margin-top: 8px; max-height: 200px; overflow-y: auto">
@@ -383,7 +408,7 @@ function onModelChange(v: string) {
         <div v-if="pendingInstructionOpen || chat.pendingInstruction" class="composer-tip" style="justify-content: flex-start; margin: 0 0 8px">
           <input
             class="input"
-            style="flex: 1; padding: 6px 10px; font-size: 0.78rem"
+            style="flex: 1; padding: 6px 10px"
             placeholder="临时规范指令（仅随下一次发送附带，如：本章不要出现打斗）"
             :value="chat.pendingInstruction"
             @input="chat.pendingInstruction = ($event.target as HTMLInputElement).value"
@@ -500,7 +525,10 @@ function onModelChange(v: string) {
     <div class="chat-empty" style="height: 100%; padding: 20px">
       <div class="empty-glyph anim-in"><MoonStar /></div>
       <div style="font-size: 1.3rem; font-weight: 800" class="gradient-text">RP · 星屿</div>
-      <div style="color: var(--text-1)">从左侧选择角色卡开始对话</div>
+      <div style="color: var(--text-1)">
+        <span class="copy-desktop">从左侧选择角色卡开始对话</span>
+        <span class="copy-mobile">点左上角 ☰ 菜单，选择角色卡开始对话</span>
+      </div>
 
       <div style="display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; justify-content: center">
         <button class="btn primary" style="min-width: 220px; padding: 11px 22px" @click="emit('goto', 'characters')">

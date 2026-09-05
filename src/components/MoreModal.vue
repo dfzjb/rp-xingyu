@@ -118,7 +118,8 @@ function onRxListUpdate(v: unknown[]) {
   if (c) c.regexScripts = v
 }
 
-const drawerWidth = Math.min(880, Math.max(430, window.innerWidth - 40))
+// 抽屉宽度：桌面 430~880，窄屏不超过视口（否则左侧导航会被屏幕裁掉）
+const drawerWidth = Math.min(880, Math.max(window.innerWidth - 40, Math.min(430, window.innerWidth)))
 
 // ── 管理员口令：校验通过后打开广场后台弹窗（弹窗由 App 挂载） ──
 const adminPass = ref('')
@@ -319,6 +320,29 @@ async function clearAdminToken() {
 }
 
 .more-content { flex: 1; min-width: 0; padding: 14px 18px 28px; }
+
+/* 窄屏（手机）：抽屉≈全屏，左侧分类导航改为顶部横向滑动条 */
+@media (max-width: 640px) {
+  .more-layout { flex-direction: column; }
+  .more-nav {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-1);
+    padding: 10px 12px;
+    z-index: 2;
+  }
+  .more-nav-title { display: none; }
+  .more-nav-item { width: auto; white-space: nowrap; padding: 8px 13px; }
+  .more-nav-item.sub { padding-left: 13px; font-size: 0.8rem; }
+  .more-content { padding: 14px 14px 24px; }
+}
 
 .field label {
   font-size: 0.78rem;

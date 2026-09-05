@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2, Star,
+  LibraryBig, Search, Upload, Plus, Pencil, FileJson, ImageDown, Trash2, Sparkles, Wand2, Star, MessageCircle,
 } from 'lucide-vue-next'
 import { NTabs, NTabPane } from 'naive-ui'
 import WorldBookEditor from '../components/WorldBookEditor.vue'
@@ -176,12 +176,32 @@ async function startChat(c: CharacterCard) {
   await chat.openCharacter(c.uuid)
 }
 
+/** 触屏没有 hover：首次点按展开卡片操作，再点同一张进入对话；桌面行为不变 */
+const isTouch = typeof matchMedia !== 'undefined' && matchMedia('(hover: none)').matches
+const actionCardUuid = ref<string | null>(null)
+function onCardClick(c: CharacterCard) {
+  if (!isTouch) { void startChat(c); return }
+  if (actionCardUuid.value === c.uuid) {
+    actionCardUuid.value = null
+    void startChat(c)
+  } else {
+    actionCardUuid.value = c.uuid
+  }
+}
+function onDocClick(e: Event) {
+  const t = e.target as HTMLElement | null
+  if (!t?.closest('.char-card')) actionCardUuid.value = null
+}
+
 function onMouseMove(e: MouseEvent) {
   const el = e.currentTarget as HTMLElement
   const r = el.getBoundingClientRect()
   el.style.setProperty('--mx', `${e.clientX - r.left}px`)
   el.style.setProperty('--my', `${e.clientY - r.top}px`)
 }
+
+onMounted(() => { if (isTouch) document.addEventListener('click', onDocClick) })
+onUnmounted(() => document.removeEventListener('click', onDocClick))
 </script>
 
 <template>
@@ -212,7 +232,7 @@ function onMouseMove(e: MouseEvent) {
             :key="c.uuid"
             class="char-card spotlight-card"
             :style="{ animationDelay: `${Math.min(i * 40, 320)}ms` }"
-            @click="startChat(c)"
+            @click="onCardClick(c)"
             @mousemove="onMouseMove"
           >
             <div class="cover">
@@ -225,14 +245,15 @@ function onMouseMove(e: MouseEvent) {
               </div>
               <div v-if="c.fav" class="fav-badge" title="已收藏置顶"><Star :size="12" /></div>
               <div class="cover-title">{{ c.name }}</div>
-              <div class="hover-actions" @click.stop>
-                <button class="btn sm" @click="openEdit(c)"><Pencil :size="13" />编辑</button>
-                <button class="btn sm" @click="exportJson(c)"><FileJson :size="13" />JSON</button>
-                <button class="btn sm" @click="exportPng(c)"><ImageDown :size="13" />PNG</button>
+              <div class="hover-actions" :class="{ show: actionCardUuid === c.uuid }" @click.stop>
+                <button class="btn sm primary" @click="actionCardUuid = null; startChat(c)"><MessageCircle :size="13" />对话</button>
+                <button class="btn sm" @click="actionCardUuid = null; openEdit(c)"><Pencil :size="13" />编辑</button>
+                <button class="btn sm" @click="actionCardUuid = null; exportJson(c)"><FileJson :size="13" />JSON</button>
+                <button class="btn sm" @click="actionCardUuid = null; exportPng(c)"><ImageDown :size="13" />PNG</button>
                 <button class="btn sm" :class="{ 'fav-on': c.fav }" @click="characters.toggleFav(c.uuid)">
                   <Star :size="13" class="star-ic" :class="{ faved: c.fav }" />{{ c.fav ? '已收藏' : '收藏' }}
                 </button>
-                <button class="btn sm danger" @click="removeCard(c)"><Trash2 :size="13" />删除</button>
+                <button class="btn sm danger" @click="actionCardUuid = null; removeCard(c)"><Trash2 :size="13" />删除</button>
               </div>
             </div>
             <div class="info">

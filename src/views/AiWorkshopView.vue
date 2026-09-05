@@ -585,6 +585,27 @@ html[data-theme='light'] .aiw-card {
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 860px) { .grid-2 { grid-template-columns: 1fr; } }
 
+/* 手机：左侧目标导航改为顶部横向滑动条，主内容交给外层页面滚动 */
+@media (max-width: 768px) {
+  .aiw-body { flex-direction: column; min-height: 0; }
+  .aiw-nav {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    padding: 10px 12px;
+  }
+  .aiw-nav-item { width: auto; flex-shrink: 0; padding: 8px 12px; }
+  .aiw-nav-icon { width: 28px; height: 28px; }
+  .aiw-nav-text i { display: none; }
+  .aiw-main { overflow-y: visible; padding: 16px 14px 24px; }
+  .aiw-target { flex-direction: column; align-items: stretch; gap: 8px; }
+  .aiw-target label { white-space: normal; }
+}
+
 .aiw-main { flex: 1; overflow-y: auto; padding: 28px 36px; }
 /* 放大工作台内的输入内容 */
 .aiw-main .textarea, .aiw-main .input { font-size: 0.95rem; }

@@ -148,5 +148,6 @@ function isEnabled(s: RScript): boolean {
 html[data-theme='light'] .rx-entry { background: #f6f8fd; }
 .rx-head { display: flex; align-items: center; gap: 9px; }
 .rx-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; }
+@media (max-width: 640px) { .rx-grid { grid-template-columns: 1fr; } }
 .rx-flags { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 0.76rem; color: var(--text-1); }
 </style>

@@ -221,8 +221,27 @@
 .hall-field input { width: 100%; }
 
 @media (max-width: 760px) {
-  .hall-layout { grid-template-columns: 1fr; }
-  .hall-side-col { display: none; }
+  /* 手机：侧栏不再隐藏（骰子/成员/战局是跑团核心功能），改为剧情流下方的可滚动面板 */
+  .hall-layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .hall-side-col {
+    display: flex;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    max-height: 42vh;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+  .hall-topbar { flex-wrap: wrap; gap: 8px 10px; padding: 8px 12px; padding-top: calc(8px + env(safe-area-inset-top)); }
+  .hall-topbar-right { margin-left: 0; }
+  .hall-stream { padding: 12px; }
+  .hall-msg { max-width: 94%; }
+  .hall-narration { max-width: 96%; }
+  .hall-scene-form { min-width: 0; }
+  .hall-composer { padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); }
+  /* iOS 聚焦缩放防线：控件字号 ≥16px（压过上方 12px 的桌面设定） */
+  .hall-composer textarea,
+  .hall-scene-form .input,
+  .hall-scene-select,
+  .hall-state-add .input { font-size: 16px; }
 }
 
 /* 大厅补充 */

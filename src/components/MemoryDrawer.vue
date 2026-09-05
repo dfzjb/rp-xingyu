@@ -23,6 +23,9 @@ const distilling = ref(false)
 
 const sessionId = computed(() => chat.currentSession?.id || '')
 
+// 窄屏抽屉不超过视口宽，否则内容会被屏幕裁掉
+const drawerWidth = Math.min(420, window.innerWidth)
+
 async function reload() {
   if (!sessionId.value) return
   items.value = await listMemories(sessionId.value)
@@ -106,7 +109,7 @@ async function clearAll() {
 </script>
 
 <template>
-  <n-drawer :show="props.show" :width="420" placement="right" @update:show="emit('update:show', $event)">
+  <n-drawer :show="props.show" :width="drawerWidth" placement="right" @update:show="emit('update:show', $event)">
     <n-drawer-content title="会话记忆" closable>
       <div style="display: flex; flex-direction: column; gap: 12px">
         <p style="font-size: 0.78rem; color: var(--text-2); line-height: 1.7">
