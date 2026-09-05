@@ -1,17 +1,14 @@
 <script setup lang="ts">
 /**
  * P2-16 开发者面板：展示最终发给主模型的完整 messages（逐条 + 来源标注）。
+ * 内嵌于「更多 → messages 预览」标签页（非弹窗，切换标签即离开）。
  * 数据源（chat store，内存态）：
  * - lastSent：真实发送/续写时捕获的最终 messages；
  * - previewCapture：对当前链路干跑一次组装的结果（不调模型）。
  * 排查"模型为什么思考 X"：展开含 X 的消息 → 看来源标签 → 定位到具体预设/世界书条目/卡文。
  */
-import { computed, ref, watch } from 'vue'
-import { NModal } from 'naive-ui'
+import { computed, ref } from 'vue'
 import { useChatStore } from '../stores/chat'
-
-const props = withDefaults(defineProps<{ show?: boolean }>(), { show: true })
-const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const chat = useChatStore()
 const tab = ref<'sent' | 'preview'>('sent')
@@ -27,10 +24,6 @@ async function refreshPreview() {
   await chat.debugPreview()
   loading.value = false
 }
-
-watch(() => props.show, (v) => {
-  if (v && tab.value === 'preview' && !chat.previewCapture) void refreshPreview()
-})
 
 function switchTab(t: 'sent' | 'preview') {
   tab.value = t
@@ -60,20 +53,15 @@ function roleTone(role: string): string {
 </script>
 
 <template>
-  <n-modal
-    :show="props.show"
-    preset="card"
-    style="width: min(940px, 94vw)"
-    title="调试 · 最终 messages（发给主模型的完整内容）"
-    :bordered="false"
-    @update:show="emit('update:show', $event)"
-  >
+  <div>
+    <p style="font-size: 0.76rem; color: var(--text-2); line-height: 1.7; margin-bottom: 10px">
+      展示最终发给主模型的完整 messages（含发送层正则处理后的文本）。排查"模型为什么思考 X"：
+      展开含 X 的消息，看头上的<b>来源标签</b>（预设/世界书条目/前奏/楼层/注入指令），即可定位出处。
+    </p>
+
     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px">
       <button class="btn sm" :class="{ primary: tab === 'sent' }" @click="switchTab('sent')">上次实际发送</button>
       <button class="btn sm" :class="{ primary: tab === 'preview' }" @click="switchTab('preview')">当前会话预览（干跑）</button>
-      <span v-if="cap" style="font-size: 0.74rem; color: var(--text-2)">
-        {{ cap.kind }} · {{ new Date(cap.at).toLocaleTimeString() }} · {{ cap.charName }} · {{ cap.messages.length }} 条 / {{ totalChars }} 字
-      </span>
       <span style="margin-left: auto; display: flex; gap: 6px">
         <button v-if="tab === 'preview'" class="btn sm" :disabled="loading" @click="refreshPreview">
           {{ loading ? '生成中…' : '刷新预览' }}
@@ -82,6 +70,10 @@ function roleTone(role: string): string {
           {{ copied === 'all' ? '已复制 ✓' : '复制整包 JSON' }}
         </button>
       </span>
+    </div>
+
+    <div v-if="cap" style="font-size: 0.74rem; color: var(--text-2); margin-bottom: 8px">
+      {{ cap.kind }} · {{ new Date(cap.at).toLocaleTimeString() }} · {{ cap.charName }} · {{ cap.messages.length }} 条 / {{ totalChars }} 字
     </div>
 
     <div v-if="loading && !cap" style="color: var(--text-2); font-size: 0.8rem; padding: 20px 0">组装中…</div>
@@ -106,13 +98,12 @@ function roleTone(role: string): string {
         <div v-else class="msg-peek">{{ m.content.slice(0, 160) }}{{ m.content.length > 160 ? '…' : '' }}</div>
       </div>
     </div>
-  </n-modal>
+  </div>
 </template>
 
 <style scoped>
 .msg-list {
-  display: flex; flex-direction: column; gap: 8px;
-  max-height: 62vh; overflow-y: auto; padding-right: 2px;
+  display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;
 }
 .msg-row {
   border: 1px solid var(--line); border-radius: 11px; padding: 8px 10px;
