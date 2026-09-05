@@ -12,6 +12,8 @@ import { genRoomCode } from '../../lib/hall/crypto'
 import { DEFAULT_HALL_RELAY, type HallRelayMode } from '../../lib/hall/protocol'
 import { useSettingsStore } from '../../stores/settings'
 import { RULE_PRESETS, TONE_OPTIONS, KP_STYLES, emptySetting, isEmptySetting, type RoomSetting } from '../../lib/hall/rules'
+import { normalizeModule, type GameModule } from '../../lib/hall/module'
+import { db } from '../../db'
 import { usePersonasStore } from '../../stores/personas'
 
 const emit = defineEmits<{ close: [] }>()
@@ -83,7 +85,43 @@ onMounted(async () => {
   campaigns.value = hall.campaigns.map((c) => ({
     id: c.id, name: c.name, roomCode: c.roomCode, locked: c.locked, hasPassword: !!c.password,
   }))
+  // 模组库：本机 IndexedDB（AI 工作台「剧情模组」页签可生成/导入入库）
+  moduleList.value = await db.modules.orderBy('updatedAt').reverse().toArray()
 })
+
+// ── 剧情模组：从模组库挂载，或导入一次性 JSON（章节大纲/路线/结局/命运转盘随机表）──
+const moduleList = ref<GameModule[]>([])
+const moduleId = ref('') // '' = 不用模组
+const importedModule = ref<GameModule | null>(null) // 导入的一次性模组（本局使用，不入库）
+const moduleInput = ref<HTMLInputElement | null>(null)
+const pickedModule = computed<GameModule | null>(
+  () => importedModule.value || moduleList.value.find((m) => m.id === moduleId.value) || null,
+)
+
+function pickModuleFile() { moduleInput.value?.click() }
+
+async function onModulePicked(e: Event) {
+  const f = (e.target as HTMLInputElement).files?.[0]
+  if (!f) return
+  try {
+    const m = normalizeModule(JSON.parse(await f.text()))
+    if (!m) {
+      createError.value = '不是有效的模组文件：没找到可识别的章节/结局/随机表内容'
+    } else {
+      importedModule.value = m
+      moduleId.value = ''
+      createError.value = ''
+    }
+  } catch {
+    createError.value = '模组文件解析失败：请确认是导出的模组 JSON'
+  }
+  ;(e.target as HTMLInputElement).value = ''
+}
+
+function clearModule() {
+  importedModule.value = null
+  moduleId.value = ''
+}
 
 // ── AI 辅助：简洁 = 房间名+简介；详细 = 全套开团设定 ──
 const aiIdea = ref('')
@@ -149,6 +187,7 @@ async function submit() {
     cover: form.cover,
     locked: form.locked,
     setting: mode.value === 'pro' && !isEmptySetting(setting) ? { ...setting, tones: [...setting.tones] } : null,
+    module: mode.value === 'pro' ? pickedModule.value : null,
     relay: relayMode.value,
   }
   await connect({
@@ -346,6 +385,26 @@ watch(() => hall.state.phase, (p) => { if (p === 'room') emit('close') })
           <div class="field">
             <label>模组 / 剧情梗概 <span class="group-sub">KP 秘密：含真相与转折，不会剧透给玩家</span></label>
             <textarea v-model="setting.module" class="textarea" rows="3" maxlength="400" placeholder="故事的起因、真相、可用的转折点…" />
+          </div>
+          <div class="field">
+            <label>剧情模组（结构化） <span class="group-sub">可选：章节大纲+规划路线+结局表+命运转盘随机表；KP 按章节推进，全员侧栏实时看进度与结局图鉴</span></label>
+            <select v-model="moduleId" class="input" @change="importedModule = null">
+              <option value="">不使用模组（自由即兴团）</option>
+              <option v-for="m in moduleList" :key="m.id" :value="m.id">
+                {{ m.name }}（{{ m.chapters.length }} 章 · {{ m.endings.length }} 结局{{ m.tables.length ? ` · ${m.tables.length} 转盘` : '' }}）
+              </option>
+            </select>
+            <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center">
+              <button class="btn sm" @click="pickModuleFile">导入模组 JSON</button>
+              <button v-if="pickedModule" class="btn sm ghost" @click="clearModule">清除已选</button>
+              <input ref="moduleInput" type="file" accept="application/json,.json" hidden @change="onModulePicked" />
+            </div>
+            <div v-if="importedModule" class="group-sub" style="display: block; margin-top: 6px">
+              已导入「{{ importedModule.name }}」——只用于本局，不存入模组库（想入库可到 AI 工作台「剧情模组」导入）
+            </div>
+            <div v-if="pickedModule" class="relay-hint" style="margin-top: 8px">
+              {{ pickedModule.synopsis || '（模组没有写简介）' }}
+            </div>
           </div>
           <div class="field">
             <label>开场场景（KP 的开局指引：玩家此刻在哪、正在做什么）</label>

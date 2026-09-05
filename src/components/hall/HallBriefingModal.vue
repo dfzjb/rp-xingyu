@@ -47,6 +47,18 @@ const styleName = computed(() => KP_STYLES.find((k) => k.id === setting.value?.k
             <div class="brief-text">{{ sec.text }}</div>
           </div>
         </template>
+
+        <!-- 结构化剧情模组：只展示公开面（名称/简介/规模），章节节拍与结局真相是 KP 台的秘密 -->
+        <div v-if="hall.state.module" class="brief-sec">
+          <div class="brief-label">剧情模组</div>
+          <div class="brief-text">
+            <b>{{ hall.state.module.name }}</b>{{ hall.state.module.synopsis ? '——' + hall.state.module.synopsis : '' }}
+            <span style="display: block; margin-top: 6px; color: var(--text-2); font-size: 0.74rem">
+              共 {{ hall.state.module.chapters.length }} 章 · {{ hall.state.module.routes.length }} 条路线 · {{ hall.state.module.endings.length }} 个结局{{ hall.state.module.tables.length ? ` · ${hall.state.module.tables.length} 张命运转盘` : '' }}
+              ；章节节拍是 KP 的秘密，当前进度看侧栏「剧情」面板
+            </span>
+          </div>
+        </div>
       </div>
       <div class="modal-body" v-else>
         <p style="font-size: 0.82rem; color: var(--text-2)">本房间没有开团设定（房主以简洁模式创建）。</p>

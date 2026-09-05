@@ -18,6 +18,8 @@ import HallMembersPanel from '../components/hall/HallMembersPanel.vue'
 import HallDiceBar from '../components/hall/HallDiceBar.vue'
 import HallSceneBar from '../components/hall/HallSceneBar.vue'
 import HallStatePanel from '../components/hall/HallStatePanel.vue'
+import HallProgressPanel from '../components/hall/HallProgressPanel.vue'
+import HallWheelPanel from '../components/hall/HallWheelPanel.vue'
 import HallAreaBar from '../components/hall/HallAreaBar.vue'
 import HallSettingsModal from '../components/hall/HallSettingsModal.vue'
 import HallPersonaModal from '../components/hall/HallPersonaModal.vue'
@@ -201,7 +203,9 @@ watch(() => hall.state.error, (e) => {
       <aside class="hall-side-col">
         <HallMembersPanel />
         <HallDiceBar />
+        <HallWheelPanel v-if="hall.state.module?.tables.length" />
         <HallStatePanel />
+        <HallProgressPanel v-if="hall.state.module" />
         <HallAreaBar />
       </aside>
     </main>

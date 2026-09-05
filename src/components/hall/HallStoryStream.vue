@@ -10,16 +10,17 @@ const props = defineProps<{
   emptyHint?: string
 }>()
 
-type StreamableEvent = Extract<RoomEvent, { k: 'chat' | 'narration' | 'roll' | 'system' }>
+type StreamableEvent = Extract<RoomEvent, { k: 'chat' | 'narration' | 'roll' | 'system' | 'wheel' }>
 
 function isStreamable(e: RoomEvent): e is StreamableEvent {
-  return e.k === 'chat' || e.k === 'narration' || e.k === 'roll' || e.k === 'system'
+  return e.k === 'chat' || e.k === 'narration' || e.k === 'roll' || e.k === 'system' || e.k === 'wheel'
 }
 
 type Row =
   | { kind: 'chat'; id: string; char: string; user: string; text: string; mine: boolean; initial: string }
   | { kind: 'narr'; id: string; text: string }
   | { kind: 'roll'; id: string; who: string; detail: string }
+  | { kind: 'wheel'; id: string; who: string; tableName: string; label: string; note: string }
   | { kind: 'sys'; id: string; text: string }
 
 const rows = computed<Row[]>(() =>
@@ -35,6 +36,7 @@ const rows = computed<Row[]>(() =>
     }
     if (e.k === 'narration') return { kind: 'narr', id: e.id, text: e.text }
     if (e.k === 'roll') return { kind: 'roll', id: e.id, who: e.charName || e.name, detail: e.detail }
+    if (e.k === 'wheel') return { kind: 'wheel', id: e.id, who: e.charName || e.name, tableName: e.tableName, label: e.label, note: e.note }
     return { kind: 'sys', id: e.id, text: e.text }
   }),
 )
@@ -78,6 +80,14 @@ watch(
         <span>🎲</span>
         <b>{{ row.who }}</b>
         <span style="font-family: monospace">{{ row.detail }}</span>
+      </div>
+
+      <div v-else-if="row.kind === 'wheel'" class="hall-roll-chip hall-wheel-chip" :title="row.note">
+        <span>🎡</span>
+        <b>{{ row.who }}</b>
+        <span>「{{ row.tableName }}」→</span>
+        <b>{{ row.label }}</b>
+        <span v-if="row.note" class="hall-wheel-note">{{ row.note }}</span>
       </div>
 
       <div v-else class="hall-sys-line">{{ row.text }}</div>
