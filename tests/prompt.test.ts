@@ -267,7 +267,7 @@ describe('第二轮严格对齐旧版', () => {
     expect(sys.indexOf('[Style Priority]')).toBeLessThan(sys.indexOf('[User Info]'))
   })
 
-  it('system_top/global_note 世界书进 system（破限之后、其他预设之前）', () => {
+  it('system_top/global_note 卡带世界书进 system，且位于内置预设 [System Presets] 之后（内置优先）', () => {
     const c = char({
       worldInfo: [
         { constant: true, content: '顶部档案', comment: 'ST', position: 'system_top' },
@@ -283,8 +283,43 @@ describe('第二轮严格对齐旧版', () => {
     const sys = msgs[0].content
     expect(sys).toContain('[ST]\n顶部档案')
     expect(sys).toContain('[GN]\n全局注释')
-    expect(sys.indexOf('破限正文')).toBeLessThan(sys.indexOf('顶部档案'))
-    expect(sys.indexOf('全局注释')).toBeLessThan(sys.indexOf('[System Presets]'))
+    // 破限 → [System Presets]（内置预设）→ 卡带世界书
+    expect(sys.indexOf('破限正文')).toBeLessThan(sys.indexOf('其他预设正文'))
+    expect(sys.indexOf('其他预设正文')).toBeLessThan(sys.indexOf('顶部档案'))
+    expect(sys.indexOf('顶部档案')).toBeLessThan(sys.indexOf('全局注释'))
+    expect(sys.indexOf('[Style Priority]')).toBeGreaterThan(sys.indexOf('全局注释'))
+  })
+
+  it('内置优先：卡带 system_prompt/phi 与卡带正则都越不过内置预设', () => {
+    const c = char({
+      systemPromptOverride: '卡带系统提示词覆盖角色定义',
+      postHistoryInstructions: '卡带历史后指令',
+      worldInfo: [{ constant: true, content: '卡带世界书设定', comment: '卡册', position: 'system_top' }],
+    })
+    const opts: PromptOptions = {
+      regexEnabled: true,
+      // 卡带正则试图改写内置预设文本与角色卡内容
+      regexScripts: [{ pattern: '内置|卡带', replace: '【被正则改写】', applyOnSend: true }],
+      promptEntries: [{ id: 'jb', name: '破限', role: 'system', content: '内置预设正文破限', enabled: true }],
+    }
+    const msgs = buildPrompt(c, undefined, chain(['历史楼层一', '历史楼层二卡带']), 20, opts)
+    const sys = msgs[0].content
+    // 内置预设位于第一条 system 开头，卡带世界书在内置预设之后
+    expect(sys.startsWith('内置预设正文破限')).toBe(true)
+    expect(sys.indexOf('内置预设正文破限')).toBeLessThan(sys.indexOf('卡带世界书设定'))
+    // 卡带 system_prompt 只覆盖 [Character] 角色定义块（前奏 user 消息），不挤压内置预设；
+    // 前奏属 user 层可被卡带正则改写，内置预设所在的 system 块则完全免疫
+    const pre = prelude(msgs)
+    expect(pre.content).toContain('【被正则改写】系统提示词覆盖角色定义')
+    expect(pre.content).not.toContain('Personality:')
+    // 卡带 phi 在历史楼层之后，且 phi 以 system 注入、不受卡带正则改写
+    const iPhi = msgs.findIndex((m) => m.content === '卡带历史后指令')
+    expect(iPhi).toBeGreaterThan(-1)
+    expect(msgs.findIndex((m) => m.content === '历史楼层一')).toBeLessThan(iPhi)
+    // 发送层正则跳过 system：内置预设与卡带世界书文本不被卡带正则改写；历史楼层被改写
+    expect(sys).toContain('内置预设正文破限')
+    expect(sys).toContain('卡带世界书设定')
+    expect(msgs.some((m) => m.role !== 'system' && m.content.includes('【被正则改写】'))).toBe(true)
   })
 
   it('user_top 前置进最后一条 user 消息；assistant_top 以尾部 system [Instructions for next message] 收尾', () => {

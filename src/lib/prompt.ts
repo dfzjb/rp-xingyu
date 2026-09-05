@@ -1,12 +1,12 @@
 /**
- * 提示词组装（严格对齐旧版 generateResponse 结构）：
- * 第一条 system = 破限 → system_top/global_note 世界书 → [System Presets]其他系统预设
+ * 提示词组装（内置优先：内置预设强制存在、默认全开，卡带内容一律位于内置预设之后，冲突时以内置为准）：
+ * 第一条 system = 破限 → [System Presets]其他系统预设 → 卡带世界书 system_top/global_note
  *                → [Style Priority] → [User Info] → 好感度/UI状态 → 未绑定记忆
  * user/assistant = 预设预注入条目（位于角色前奏之前）
- * user 角色前奏   = before_char 世界书([条目名]) → [Character] 角色定义+示例原文 → after_char 世界书
+ * user 角色前奏   = before_char 世界书([条目名]) → [Character] 角色定义(卡 system_prompt 可覆盖)+示例原文 → after_char 世界书
  * 历史 = 连续同角色楼层合并后的消息链，绑定记忆挂对应 AI 消息之后；@深度世界书在最终数组上倒数 splice（缺省 user）
- * 注入尾 = user_top 前置末条用户消息；assistant_top/phi/临时指令/UI 更新指令以 system 收尾
- * 最后一步 = 发送层正则：对整条 messages 逐条执行（system 跳过），对齐旧版 processRegex(isPrompt)
+ * 注入尾 = user_top 前置末条用户消息 → 卡 phi（历史后指令）→ assistant_top/临时指令/UI 更新指令以 system 收尾
+ * 最后一步 = 发送层正则：对整条 messages 逐条执行（system 跳过——内置预设文本不受卡带正则改写）
  *
  * 来源追踪：assemble() 在组装的同时给每条消息携带 origins（来自哪个预设/世界书条目/楼层/注入），
  * 经 buildPromptTrace() 暴露给开发者面板（P2-16）；buildPrompt() 保持原签名只返回 messages。
@@ -158,14 +158,18 @@ function assemble(
   const jailbreakEntries = sysPresetEntries.filter((p) => p.name === '破限')
   const otherSysPresetEntries = sysPresetEntries.filter((p) => p.name !== '破限')
 
-  // ── 第一条 system（顺序严格对齐旧版 systemPromptParts）──
+  // ── 第一条 system（内置优先：破限 → [System Presets] → 卡带世界书 system_top/global_note）──
   const sysBlocks: string[] = []
   const sysMeta: string[][] = []
   for (const p of jailbreakEntries) {
     sysBlocks.push(replaceMacros(p.content.trim(), ctx))
     sysMeta.push([`预设·破限（${p.name}）`])
   }
-  // system_top / global_note 世界书进 system（破限之后、其他预设之前）
+  if (otherSysPresetEntries.length) {
+    sysBlocks.push(`[System Presets]\n${otherSysPresetEntries.map((p) => replaceMacros(p.content.trim(), ctx)).join('\n\n---\n\n')}`)
+    sysMeta.push([`系统预设（${otherSysPresetEntries.map((p) => p.name).join('、')}）`])
+  }
+  // 卡带世界书整体位于内置预设之后（冲突时内置优先）：system_top / global_note 进 system
   if (wi.systemTop.length) {
     sysBlocks.push(joinWI(wi.systemTop))
     sysMeta.push([`世界书·系统顶部（${wiNames(wi.systemTop)}）`])
@@ -173,10 +177,6 @@ function assemble(
   if (wi.globalNote.length) {
     sysBlocks.push(joinWI(wi.globalNote))
     sysMeta.push([`世界书·全局注释（${wiNames(wi.globalNote)}）`])
-  }
-  if (otherSysPresetEntries.length) {
-    sysBlocks.push(`[System Presets]\n${otherSysPresetEntries.map((p) => replaceMacros(p.content.trim(), ctx)).join('\n\n---\n\n')}`)
-    sysMeta.push([`系统预设（${otherSysPresetEntries.map((p) => p.name).join('、')}）`])
   }
   // 旧版固定注入的 [Style Priority]（原文，不做增改）
   sysBlocks.push(

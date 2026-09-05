@@ -5,6 +5,7 @@ import { SlidersHorizontal } from 'lucide-vue-next'
 import { NSwitch } from 'naive-ui'
 import { applyPromptEntryPatch } from '../lib/builtinPresets'
 import { uuid } from '../lib/id'
+import { toast } from '../lib/toast'
 import { useSettingsStore } from '../stores/settings'
 import type { PromptPreset } from '../types'
 
@@ -20,6 +21,11 @@ async function addPromptEntry() {
   await settings.patch({ promptEntries: list })
 }
 async function removePromptEntry(id: string) {
+  const target = ((settings.settings.promptEntries || []) as Entry[]).find((p) => p.id === id)
+  if (target?.builtin) {
+    toast.warning('内置预设不可删除，如不需要可关闭开关')
+    return
+  }
   await settings.patch({ promptEntries: (settings.settings.promptEntries || []).filter((p) => p.id !== id) })
 }
 async function updatePromptEntry(i: number, patch: Partial<PromptPreset>) {
@@ -36,7 +42,7 @@ function entryLabel(p: Entry): string {
   return p.name || '未命名'
 }
 async function onResetBuiltin() {
-  if (!confirm('重置内置预设为出厂状态？\n\n将恢复内置条目原文与默认启停（few-shot 预注入默认停用），自建条目不受影响。')) return
+  if (!confirm('重置内置预设为出厂状态？\n\n将恢复内置条目原文与默认启停（默认全开，仅第三人称因人称互斥默认停用），自建条目不受影响。')) return
   await settings.resetBuiltinPromptEntries()
 }
 </script>
@@ -44,7 +50,7 @@ async function onResetBuiltin() {
 <template>
   <div>
     <p style="font-size: 0.78rem; color: var(--text-2); line-height: 1.7; margin-bottom: 12px">
-      每条是一个可独立启停的提示词条目。system 条目拼进系统提示末尾；user / assistant 条目作为消息追加在对话历史之后。核心组中仅破限默认启用，few-shot 预注入默认停用（防思考模型每轮元分析，可单独开启）；管理组按需开启。
+      每条是一个可独立启停的提示词条目。system 条目拼进系统提示末尾；user / assistant 条目作为消息追加在对话历史之后。内置预设默认全部启用（仅第三人称因与第二人称互斥默认停用），强制存在、不可删除，排序优先于自建条目与角色卡内容；对内置条目的启停与内容修改会被保留。
     </p>
 
     <div v-for="(p, i) in entries" :key="p.id" class="preset-entry" :style="p.enabled ? '' : 'opacity:0.55'">
@@ -65,7 +71,7 @@ async function onResetBuiltin() {
         <n-switch size="small" :value="p.enabled" @update:value="(v: boolean) => updatePromptEntry(i, { enabled: v })" />
         <button class="btn sm ghost" title="上移" @click="movePromptEntry(i, -1)">▲</button>
         <button class="btn sm ghost" title="下移" @click="movePromptEntry(i, 1)">▼</button>
-        <button class="btn sm ghost danger" title="删除" @click="removePromptEntry(p.id)">✕</button>
+        <button class="btn sm ghost danger" :title="p.builtin ? '内置预设不可删除' : '删除'" :disabled="!!p.builtin" @click="removePromptEntry(p.id)">✕</button>
       </div>
       <textarea
         class="textarea"

@@ -4,7 +4,7 @@ import { db, DEFAULT_SETTINGS, getSettings, saveSettings } from '../db'
 import type { PromptPreset, Settings } from '../types'
 import { fetchModels, normalizeBaseUrl } from '../lib/api'
 import { deepPlain } from '../lib/plain'
-import { BUILTIN_CORE_PRESETS, BUILTIN_MANAGED_PRESETS, builtinCoreDefaultEnabled, enforcePerspectiveMutex, rebuildWithFactoryBuiltinEntries } from '../lib/builtinPresets'
+import { BUILTIN_CORE_PRESETS, BUILTIN_MANAGED_PRESETS, builtinCoreDefaultEnabled, builtinManagedDefaultEnabled, enforcePerspectiveMutex, rebuildWithFactoryBuiltinEntries } from '../lib/builtinPresets'
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({ ...DEFAULT_SETTINGS })
@@ -74,62 +74,68 @@ export const useSettingsStore = defineStore('settings', () => {
   )
 
   /**
-   * 内置预设条目同步（旧版 syncBuiltinPreset 语义）：
-   * 按 builtinKey 确保存在、不重复；核心组保持在最前（出厂仅破限启用，few-shot 预注入默认停用——P0-5 方案A）；
-   * 管理组默认停用；用户对内置条目的启停/编辑状态保留（只补不覆盖）。
+   * 内置预设条目同步（旧版 syncBuiltinPreset 语义的内置优先版）：
+   * 按 builtinKey 确保存在、不重复，每次启动稳定分区重排为 核心组 → 管理组 → 用户条目
+   * （组内相对顺序不变，内置整体优先于自建内容）。已存在的内置条目保留用户的启停与内容修改；
+   * 缺失的补回并按出厂默认启用（默认全开，仅第三人称因人称互斥默认停用）。
    */
   function syncBuiltinPromptEntries() {
     const s = settings.value
     const entries = deepPlain(s.promptEntries || []) as (PromptPreset & { builtinKey?: string; builtin?: boolean })[]
-    const byKey = new Map<string, number>()
-    entries.forEach((e, i) => {
-      if (e.builtinKey && !byKey.has(e.builtinKey)) byKey.set(e.builtinKey, i)
+    const existingByKey = new Map<string, (PromptPreset & { builtinKey?: string; builtin?: boolean })>()
+    entries.forEach((e) => {
+      if (e.builtinKey && !existingByKey.has(e.builtinKey)) existingByKey.set(e.builtinKey, e)
     })
-    let changed = false
 
-    // 核心组（破限 + 预注入）：逆序 unshift，保证组内原顺序且位于最前
-    const coreDefs = [...BUILTIN_CORE_PRESETS].reverse()
-    let insertAt = 0
-    for (const def of coreDefs) {
+    const core: (PromptPreset & { builtinKey?: string; builtin?: boolean })[] = []
+    for (const def of BUILTIN_CORE_PRESETS) {
       const key = 'core:' + def.name
-      if (!byKey.has(key)) {
-        entries.splice(insertAt, 0, {
+      const found = existingByKey.get(key)
+      if (found) {
+        core.push(found)
+      } else {
+        core.push({
           id: key, name: def.name, content: def.content,
           enabled: builtinCoreDefaultEnabled(def.name), role: def.role as PromptPreset['role'],
           builtinKey: key, builtin: true,
         })
-        byKey.set(key, insertAt)
-        insertAt++
-        changed = true
       }
     }
 
-    // 管理组：默认停用，追加在末尾
+    const managed: (PromptPreset & { builtinKey?: string; builtin?: boolean })[] = []
     for (const def of BUILTIN_MANAGED_PRESETS) {
       const bk = 'managed:' + def.builtinKey
-      if (byKey.has(bk)) continue
-      entries.push({
-        id: bk,
-        name: def.name || def.builtinKey,
-        content: def.content,
-        enabled: false,
-        role: def.role === 'user' || def.role === 'assistant' ? def.role : 'system',
-        builtinKey: bk,
-        builtin: true,
-      })
-      byKey.set(bk, entries.length - 1)
-      changed = true
+      const found = existingByKey.get(bk)
+      if (found) {
+        managed.push(found)
+      } else {
+        managed.push({
+          id: bk,
+          name: def.name || def.builtinKey,
+          content: def.content,
+          enabled: builtinManagedDefaultEnabled(def.name || def.builtinKey),
+          role: def.role === 'user' || def.role === 'assistant' ? def.role : 'system',
+          builtinKey: bk,
+          builtin: true,
+        })
+      }
     }
 
-    if (changed) {
-      void saveSettings({ promptEntries: entries })
+    // 用户条目原样保留；带 builtinKey 但已不在内置清单中的旧残留条目随之清除（强制存在语义收敛为当前内置集）
+    const custom = entries.filter((e) => !e.builtinKey)
+    const next = [...core, ...managed, ...custom]
+
+    const beforeIds = entries.map((e) => e.id).join('\n')
+    const afterIds = next.map((e) => e.id).join('\n')
+    if (beforeIds !== afterIds) {
+      void saveSettings({ promptEntries: next })
     }
-    settings.value = { ...settings.value, promptEntries: entries }
+    settings.value = { ...settings.value, promptEntries: next }
   }
 
   /**
    * 重置内置预设为出厂状态（内容=原文、启停=出厂默认；用户自建条目原样保留）。
-   * syncBuiltinPromptEntries 只补不覆盖——内置条目的默认启停/文案调整需经此操作应用到存量数据。
+   * syncBuiltinPromptEntries 保留存量条目的启停与内容修改——出厂默认的启停/文案调整需经此操作应用。
    */
   async function resetBuiltinPromptEntries() {
     const rebuilt = rebuildWithFactoryBuiltinEntries(
