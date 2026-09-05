@@ -11,6 +11,7 @@ import RegexEditor from './RegexEditor.vue'
 import PresetManagerPanel from './PresetManagerPanel.vue'
 import ApiSettingsPanel from './ApiSettingsPanel.vue'
 import ToolsPanel from './ToolsPanel.vue'
+import MessagesDebugPanel from './MessagesDebugPanel.vue'
 import UsageView from '../views/UsageView.vue'
 import { useCharactersStore } from '../stores/characters'
 import { useSettingsStore } from '../stores/settings'
@@ -27,7 +28,7 @@ interface NavItem {
   key: string
   label: string
   /** 内容面板：独立页或设置页中的锚点区块 */
-  pane: 'presets' | 'worldbook' | 'regex' | 'personas' | 'usage' | 'tools' | 'settings' | 'admin'
+  pane: 'presets' | 'worldbook' | 'regex' | 'msgdebug' | 'personas' | 'usage' | 'tools' | 'settings' | 'admin'
   anchor?: string // pane === 'settings' 时滚动到的区块 id
   sub?: boolean // 子级副标题样式
 }
@@ -39,6 +40,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { key: 'presets', label: '预设', pane: 'presets' },
       { key: 'worldbook', label: '世界书', pane: 'worldbook' },
       { key: 'regex', label: '正则', pane: 'regex' },
+      { key: 'msgdebug', label: 'messages 预览', pane: 'msgdebug' },
     ],
   },
   {
@@ -214,6 +216,10 @@ async function clearAdminToken() {
               :list="(characters.list.find((c) => c.uuid === rxCharUuid) as CharacterCard).regexScripts"
               @update:list="onRxListUpdate"
             />
+          </template>
+
+          <template v-else-if="activeTab === 'msgdebug'">
+            <MessagesDebugPanel />
           </template>
 
           <template v-else-if="activeTab === 'usage'">

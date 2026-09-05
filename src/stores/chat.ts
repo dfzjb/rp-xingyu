@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { db } from '../db'
-import type { ChatSession, CharacterCard, MemoryEntry, MsgNode, Persona } from '../types'
+import type { ChatSession, CharacterCard, MsgNode, Persona } from '../types'
 import { uuid } from '../lib/id'
 import { streamChat, chatOnce, type ApiConfig } from '../lib/api'
-import { buildPrompt } from '../lib/prompt'
+import { buildPrompt, buildPromptTrace, type ApiMessage, type PromptTraceEntry } from '../lib/prompt'
 import { deepPlain } from '../lib/plain'
 import { distillMemoriesFromChat, backfillMemories, searchVectorMemories, autoIngestVectorFloors } from '../lib/memories'
 import { mergeNpcEvalResults, listNpcAffinities, affinityScore, deriveStage } from '../lib/affinity'
@@ -17,6 +17,15 @@ import { builtinStateSyncRules, normalizeStateSyncRules, extractStateSyncUpdates
 import { useCharactersStore } from './characters'
 import { usePersonasStore } from './personas'
 import { useSettingsStore } from './settings'
+
+/** 调试捕获（P2-16）：一次发送/续写/干跑的最终 messages + 每条来源（内存态，不落库、不含密钥） */
+interface DebugCapture {
+  kind: string
+  at: number
+  charName: string
+  messages: ApiMessage[]
+  trace: PromptTraceEntry[]
+}
 
 /**
  * 对话核心：消息以树节点存储（Artemis 式），
@@ -48,6 +57,9 @@ export const useChatStore = defineStore('chat', () => {
   const lastVectorFloor = new Map<string, number>()
 
   let abortFn: (() => void) | null = null
+  /** 调试面板数据源：最近一次实际发送 / 当前链路干跑预览 */
+  const lastSent = ref<DebugCapture | null>(null)
+  const previewCapture = ref<DebugCapture | null>(null)
 
   async function load() {
     const rows = await db.chats.toArray()
@@ -427,6 +439,80 @@ export const useChatStore = defineStore('chat', () => {
       .toArray()).filter((m) => m.kind !== 'chunk')
   }
 
+  /**
+   * 请求上下文组装（主发送/续写/调试预览共用）：记忆、好感、UI 模板、回写规则、预设一并装配。
+   * path 为按时间正序的链路；uiStates 锚定链路末节点（发送/重 roll/续写三处语义一致）。
+   */
+  async function assembleRequestContext(
+    s: ChatSession,
+    path: MsgNode[],
+    o: { pendingInstruction?: string; tolerantMemories?: boolean; persona?: Persona } = {},
+  ) {
+    const settings = useSettingsStore()
+    const chars = useCharactersStore()
+    const char = chars.list.find((c) => c.uuid === s.charUuid)
+    if (!char) throw new Error('找不到当前角色卡')
+    const personas = usePersonasStore()
+    const persona = o.persona ?? personas.list.find((p) => p.uuid === personas.activeUuid)
+    const uiTpls = normalizeUiTemplates(char.uiTemplates).filter((t) => t.enabled)
+    const uiStates = baselineUiState(s, path[path.length - 1]?.id ?? null) ?? s.uiTemplateStates ?? {}
+    // 变量回写规则：内置方言 + 卡级规则（正则驱动，兼容酒馆等外部更新格式）
+    const syncRules = [...builtinStateSyncRules(), ...normalizeStateSyncRules(char.stateSyncRules)]
+    const recentText = path
+      .slice(-6)
+      .map((n) => parseCot(n.content || '').main)
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 2000)
+    let memories: Awaited<ReturnType<typeof loadInjectionMemories>>
+    if (o.tolerantMemories) {
+      try {
+        memories = await loadInjectionMemories(s.id, recentText)
+      } catch {
+        memories = []
+      }
+    } else {
+      memories = await loadInjectionMemories(s.id, recentText)
+    }
+    // 好感度状态行（每个已追踪 NPC 一条）
+    let affinityLines: string[] = []
+    try {
+      const { affinityStatusLines: lines } = await import('../lib/affinity')
+      affinityLines = await lines(s.id)
+    } catch {
+      /* 无好感度数据不阻塞 */
+    }
+    const { messages, trace } = buildPromptTrace(char, persona, path, settings.settings.contextMessages, {
+      regexScripts: char.regexScripts,
+      regexEnabled: settings.settings.regexEnabled !== false,
+      memories,
+      memoryCharLimit: settings.settings.memoryCharLimit || 1500,
+      promptEntries: (settings.settings.promptEntries || []).filter((p) => p.enabled),
+      pendingInstruction: o.pendingInstruction,
+      affinityLines,
+      uiTemplates: uiTpls,
+      uiTemplateStates: uiStates,
+      stateSyncRules: syncRules,
+      uiMainModelUpdates: settings.settings.uiTemplateMainModelUpdates,
+    })
+    return { char, persona, settings, uiTpls, uiStates, syncRules, messages, trace }
+  }
+
+  /** 调试：对当前会话当前链路干跑一次上下文组装（不调模型），供开发者面板预览 */
+  async function debugPreview(): Promise<boolean> {
+    const s = currentSession.value
+    if (!s) return false
+    const path = buildChain(s)
+    if (!path.length) return false
+    try {
+      const ctx = await assembleRequestContext(s, path, { tolerantMemories: true })
+      previewCapture.value = { kind: '预览（干跑）', at: Date.now(), charName: ctx.char.name, messages: ctx.messages, trace: ctx.trace }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   /** 组装上下文并流式生成填充既有 assistant 占位节点 */
   async function generateInto(
     s: ChatSession,
@@ -444,7 +530,6 @@ export const useChatStore = defineStore('chat', () => {
       maxTokens: settings.settings.maxTokens,
       reasoningEffort: settings.settings.reasoningEffort,
     }
-    const contextMessages = settings.settings.contextMessages
     const fail = async (msg: string) => {
       node.streaming = false
       node.content = msg
@@ -462,49 +547,21 @@ export const useChatStore = defineStore('chat', () => {
       cur = cur.parentId ? s.nodes[cur.parentId] : undefined
     }
 
-    // UI 模板：启用的模板列表 + 本节点起点的变量状态
-    // （优先沿父链取最近快照 —— 重 roll 时即父链时点；无快照回退会话级状态，兼容旧数据）
-    const uiTpls = normalizeUiTemplates(char.uiTemplates).filter((t) => t.enabled)
-    const uiStates = baselineUiState(s, node.parentId) ?? s.uiTemplateStates ?? {}
-    // 变量回写规则：内置方言 + 卡级规则（正则驱动，兼容酒馆等外部更新格式）
-    const syncRules = [...builtinStateSyncRules(), ...normalizeStateSyncRules(char.stateSyncRules)]
-
-    // 记忆/好感度/提示词组装：任一步失败都不能把占位节点卡在 streaming 态
-    let messages: ReturnType<typeof buildPrompt>
+    // 上下文组装（与续写/调试预览共用 assembleRequestContext）：任一步失败不能让占位节点卡在 streaming 态
+    let ctx: Awaited<ReturnType<typeof assembleRequestContext>>
     try {
-      // 记忆注入与续写同源（loadInjectionMemories）：向量模式按最近对话检索，失败回退总结全量
-      const recentText = path
-        .slice(-6)
-        .map((n) => parseCot(n.content || '').main)
-        .filter(Boolean)
-        .join('\n')
-        .slice(0, 2000)
-      const memories = await loadInjectionMemories(s.id, recentText)
-
-      // 好感度状态行（每个已追踪 NPC 一条）
-      let affinityLines: string[] = []
-      try {
-        const { affinityStatusLines: lines } = await import('../lib/affinity')
-        affinityLines = await lines(s.id)
-      } catch {
-        /* 无好感度数据不阻塞 */
-      }
-
-      messages = buildPrompt(char, persona, path, contextMessages, {
-        regexScripts: char.regexScripts,
-        regexEnabled: settings.settings.regexEnabled !== false,
-        memories,
-        memoryCharLimit: settings.settings.memoryCharLimit || 1500,
-        promptEntries: (settings.settings.promptEntries || []).filter((p) => p.enabled),
-        pendingInstruction,
-        affinityLines,
-        uiTemplates: uiTpls,
-        uiTemplateStates: uiStates,
-        stateSyncRules: syncRules,
-        uiMainModelUpdates: settings.settings.uiTemplateMainModelUpdates,
-      })
+      ctx = await assembleRequestContext(s, path, { pendingInstruction, persona })
     } catch (err) {
       return fail(`（上下文组装失败：${(err as Error)?.message || String(err)}）`)
+    }
+    const { uiTpls, uiStates, syncRules, messages, trace } = ctx
+    // 调试捕获（内存态）：最近一次实际发送
+    lastSent.value = {
+      kind: pendingInstruction ? '发送（带临时指令）' : '发送',
+      at: Date.now(),
+      charName: char.name,
+      messages: deepPlain(messages),
+      trace,
     }
 
     generating.value = true
@@ -717,36 +774,15 @@ export const useChatStore = defineStore('chat', () => {
       generatingError.value = '（未配置 API Key 或未选择模型：请到「设置」填写）'
       return
     }
-    // UI 模板（续写沿用该消息自身的最新快照；无快照回退会话级状态）
-    const uiTpls = normalizeUiTemplates(char.uiTemplates).filter((t) => t.enabled)
-    const uiStates = baselineUiState(s, lastAi.id) ?? s.uiTemplateStates ?? {}
-    // 变量回写规则（与主生成同源）
-    const syncRules = [...builtinStateSyncRules(), ...normalizeStateSyncRules(char.stateSyncRules)]
-    // 构建提示词：历史里已带最后一条 AI 消息，不再重复发送其正文
-    // 预设/记忆/发送层正则与主生成同源注入，避免续写看到与主发送不一致的上下文（回归 R3）
-    const recentText = chain
-      .slice(-6)
-      .map((n) => parseCot(n.content || '').main)
-      .filter(Boolean)
-      .join('\n')
-      .slice(0, 2000)
-    let memories: MemoryEntry[] = []
-    try {
-      memories = await loadInjectionMemories(s.id, recentText)
-    } catch {
-      /* 记忆加载失败不阻塞续写 */
+    // 上下文组装与主发送同源（assembleRequestContext）：记忆/好感/UI/正则/预设一并装配；
+    // 历史里已带最后一条 AI 消息，续写仅追加一条【续写】指令，不重复其正文
+    const ctx = await assembleRequestContext(s, chain, { persona, tolerantMemories: true }).catch(() => null)
+    if (!ctx) {
+      generatingError.value = '（续写上下文组装失败：记忆库或角色数据暂不可用）'
+      return
     }
-    const msgs = buildPrompt(char, persona ?? undefined, chain, settings.settings.contextMessages, {
-      regexScripts: char.regexScripts,
-      regexEnabled: settings.settings.regexEnabled !== false,
-      memories,
-      memoryCharLimit: settings.settings.memoryCharLimit || 1500,
-      uiTemplates: uiTpls,
-      uiTemplateStates: uiStates,
-      stateSyncRules: syncRules,
-      promptEntries: (settings.settings.promptEntries || []).filter((p) => p.enabled),
-      uiMainModelUpdates: settings.settings.uiTemplateMainModelUpdates,
-    })
+    const { uiTpls, uiStates, syncRules, messages: msgs, trace } = ctx
+    lastSent.value = { kind: '续写', at: Date.now(), charName: char.name, messages: deepPlain(msgs), trace }
     if (lastAi.content.trim()) {
       msgs.push({
         role: 'system',
@@ -952,5 +988,6 @@ export const useChatStore = defineStore('chat', () => {
     load, openCharacter, selectSession, createSession, deleteSession, renameSession,
     send, regenerate, stopGenerating, flushOnUnload, continueLast, impersonate,
     editNode, deleteNode, branchInfo, switchBranch, sessionsOfChar,
+    lastSent, previewCapture, debugPreview,
   }
 })

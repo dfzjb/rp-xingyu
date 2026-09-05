@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPrompt, type ApiMessage, type PromptOptions } from '../src/lib/prompt'
+import { buildPrompt, buildPromptTrace, type ApiMessage, type PromptOptions } from '../src/lib/prompt'
 import type { CharacterCard, MsgNode } from '../src/types'
 
 function char(over: Partial<CharacterCard> = {}): CharacterCard {
@@ -452,5 +452,56 @@ describe('UI 模板主模型同步开关（主模型纯扮演模式）', () => {
     expect(msgs.some((m) => m.content.includes('[UI模板变量更新]'))).toBe(false)
     expect(msgs.some((m) => m.content.includes('<ui_template_state_context>'))).toBe(false)
     expect(msgs.some((m) => m.content.includes('npc1_favor'))).toBe(false)
+  })
+})
+
+describe('buildPromptTrace 来源标注（P2-16）', () => {
+  it('预设/世界书/角色前奏/楼层 各有来源，trace 与 messages 一一对应', () => {
+    const c = char({
+      description: '描述文本',
+      worldInfo: [
+        { constant: true, content: '顶部档案', comment: 'ST', position: 'system_top' },
+        { keys: ['魔法'], content: '前置设定', comment: '前缀册', position: 'before_char' },
+      ],
+    })
+    const { messages, trace } = buildPromptTrace(c, undefined, chain(['我施展魔法', '艾拉点头']), 20, {
+      promptEntries: [{ id: 'p1', name: '破限', role: 'system', content: '破限正文', enabled: true }],
+    })
+    expect(trace).toHaveLength(messages.length)
+    const sys = trace[0].origins.join('|')
+    expect(sys).toContain('预设·破限')
+    expect(sys).toContain('世界书·系统顶部（ST）')
+    const preludeIdx = messages.findIndex((m) => m.content.includes('[Character]'))
+    const prelude = trace[preludeIdx].origins.join('|')
+    expect(prelude).toContain('角色前奏·[Character]')
+    expect(prelude).toContain('世界书·角色前（前缀册）')
+    // 前奏（user）与首条用户楼合并：合并消息的 origins 同时含前奏与开场白（根节点无父 → 开场白）
+    const floorIdx = messages.findIndex((m) => m.content.includes('我施展魔法'))
+    expect(trace[floorIdx].origins.join('|')).toContain('开场白（我）')
+  })
+
+  it('@深度注入 / user_top / phi 的来源标注', () => {
+    const c = char({
+      postHistoryInstructions: '结尾遵守事项',
+      worldInfo: [
+        { keys: ['x'], content: '深注内容', comment: '深册', position: 'at_depth', depth: 0, scanDepth: 20 },
+        { keys: ['u'], content: '顶注内容', comment: '顶册', position: 'user_top', scanDepth: 20 },
+      ],
+    })
+    const { messages, trace } = buildPromptTrace(c, undefined, chain(['u x', 'a1']), 20)
+    const depthIdx = messages.findIndex((m) => m.content.includes('深注内容'))
+    expect(trace[depthIdx].origins.join('|')).toContain('@深度注入（深册，depth=0，user）')
+    // user_top 在 @深度之后执行，前置到注入条目上 → 合并消息同时带两个来源
+    expect(trace[depthIdx].origins.join('|')).toContain('世界书·user_top 前置（顶册）')
+    const phiIdx = messages.findIndex((m) => m.content.includes('结尾遵守事项'))
+    expect(trace[phiIdx].origins).toEqual(['卡 phi·post_history_instructions'])
+  })
+
+  it('连续同角色合并后 origins 顺序拼接', () => {
+    const nodes = [node('assistant', '第一句'), node('assistant', '第二句'), node('user', '回应')]
+    const { messages, trace } = buildPromptTrace(char(), undefined, nodes, 20)
+    const mergedIdx = messages.findIndex((m) => m.content.includes('第一句'))
+    expect(messages[mergedIdx].content).toContain('第二句')
+    expect(trace[mergedIdx].origins).toEqual(['开场白（艾拉）', '开场白（艾拉）'])
   })
 })

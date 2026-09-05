@@ -7,6 +7,9 @@
  * 历史 = 连续同角色楼层合并后的消息链，绑定记忆挂对应 AI 消息之后；@深度世界书在最终数组上倒数 splice（缺省 user）
  * 注入尾 = user_top 前置末条用户消息；assistant_top/phi/临时指令/UI 更新指令以 system 收尾
  * 最后一步 = 发送层正则：对整条 messages 逐条执行（system 跳过），对齐旧版 processRegex(isPrompt)
+ *
+ * 来源追踪：assemble() 在组装的同时给每条消息携带 origins（来自哪个预设/世界书条目/楼层/注入），
+ * 经 buildPromptTrace() 暴露给开发者面板（P2-16）；buildPrompt() 保持原签名只返回 messages。
  */
 import type { CharacterCard, MemoryEntry, MsgNode, Persona, PromptPreset } from '../types'
 import { parseCot } from './cot'
@@ -21,6 +24,14 @@ export interface ApiMessage {
   role: 'system' | 'user' | 'assistant'
   content: string
 }
+
+/** 一条最终消息的来源标注（与 buildPromptTrace().trace 一一对应；合并后的消息带多个来源） */
+export interface PromptTraceEntry {
+  origins: string[]
+}
+
+/** 组装期内部消息：携带来源标记，返回前剥离 */
+type AssembledMessage = ApiMessage & { _origins?: string[] }
 
 export interface PromptOptions {
   regexScripts?: unknown
@@ -91,16 +102,21 @@ export function parseMesExample(raw: string | undefined): { role: 'user' | 'assi
   }).filter((msgs) => msgs.length > 0)
 }
 
+/** 世界书条目组 → 来源标签里的条目名列表 */
+function wiNames(list: WIPlacedEntry[]): string {
+  return list.map((e) => e.comment?.trim() || 'Entry').join('、')
+}
+
 /**
- * 完整组装请求 messages。
+ * 完整组装请求 messages，并携带每条消息的来源标注。
  */
-export function buildPrompt(
+function assemble(
   character: CharacterCard,
   persona: Persona | undefined,
   chainNodes: MsgNode[],
   contextMessages: number,
   opts: PromptOptions = {},
-): ApiMessage[] {
+): { messages: ApiMessage[]; trace: PromptTraceEntry[] } {
   const ctx = {
     charName: character.name,
     userName: persona?.name || '我',
@@ -144,29 +160,48 @@ export function buildPrompt(
 
   // ── 第一条 system（顺序严格对齐旧版 systemPromptParts）──
   const sysBlocks: string[] = []
-  for (const p of jailbreakEntries) sysBlocks.push(replaceMacros(p.content.trim(), ctx))
+  const sysMeta: string[][] = []
+  for (const p of jailbreakEntries) {
+    sysBlocks.push(replaceMacros(p.content.trim(), ctx))
+    sysMeta.push([`预设·破限（${p.name}）`])
+  }
   // system_top / global_note 世界书进 system（破限之后、其他预设之前）
-  if (wi.systemTop.length) sysBlocks.push(joinWI(wi.systemTop))
-  if (wi.globalNote.length) sysBlocks.push(joinWI(wi.globalNote))
+  if (wi.systemTop.length) {
+    sysBlocks.push(joinWI(wi.systemTop))
+    sysMeta.push([`世界书·系统顶部（${wiNames(wi.systemTop)}）`])
+  }
+  if (wi.globalNote.length) {
+    sysBlocks.push(joinWI(wi.globalNote))
+    sysMeta.push([`世界书·全局注释（${wiNames(wi.globalNote)}）`])
+  }
   if (otherSysPresetEntries.length) {
     sysBlocks.push(`[System Presets]\n${otherSysPresetEntries.map((p) => replaceMacros(p.content.trim(), ctx)).join('\n\n---\n\n')}`)
+    sysMeta.push([`系统预设（${otherSysPresetEntries.map((p) => p.name).join('、')}）`])
   }
   // 旧版固定注入的 [Style Priority]（原文，不做增改）
   sysBlocks.push(
     '[Style Priority]\n开场白和历史消息只用于理解剧情事实、人物关系和场景状态，不作为文风模板；不要继承或模仿开场白、前文回复的句式、语气密度、段落节奏或排版习惯。最终回复的文风必须优先遵守上方系统预设中的规定文风。',
   )
+  sysMeta.push(['固定注入·[Style Priority]'])
   // [User Info]（对齐旧版格式与位置：Style Priority 之后）
   if (persona?.description?.trim() || persona?.name) {
     sysBlocks.push(`[User Info]\nName: ${persona?.name || ctx.userName}\nDescription: ${replaceMacros(persona?.description?.trim() || '', ctx)}`)
+    sysMeta.push(['用户人设·[User Info]'])
   }
 
   // ── 好感度状态行 ──
-  for (const line of opts.affinityLines || []) sysBlocks.push(line)
+  for (const line of opts.affinityLines || []) {
+    sysBlocks.push(line)
+    sysMeta.push(['好感度状态行'])
+  }
 
   // ── UI 模板变量状态上下文（仅主模型同步更新模式注入；关闭时主模型纯扮演，不接收面板状态）──
   if (opts.uiTemplates?.length && opts.uiMainModelUpdates !== false) {
     const uiCtxPrompt = buildUiTemplateContextPrompt(opts.uiTemplates, opts.uiTemplateStates || {})
-    if (uiCtxPrompt) sysBlocks.push(uiCtxPrompt)
+    if (uiCtxPrompt) {
+      sysBlocks.push(uiCtxPrompt)
+      sysMeta.push(['UI 变量状态上下文'])
+    }
   }
 
   // ── 记忆分配：绑定的挂 AI 消息后，未绑定的进 system 末尾 ──
@@ -193,31 +228,44 @@ export function buildPrompt(
   for (const m of unbound) {
     if (!consumeMemory(m)) break
     sysBlocks.push(`【此前剧情记忆】\n${m.summary.trim()}`)
+    sysMeta.push([`记忆·未绑定（${m.summary.trim().slice(0, 12)}…）`])
   }
 
   // head = system 指令层 + user/assistant 预设（预注入）+ user 角色前奏
-  const head: ApiMessage[] = []
+  const head: AssembledMessage[] = []
   if (sysBlocks.length) {
-    head.push({ role: 'system', content: sysBlocks.join('\n\n') })
+    head.push({ role: 'system', content: sysBlocks.join('\n\n'), _origins: sysMeta.flat() })
   }
 
   // ── user/assistant 预设条目：对齐旧版 messagePresets，位于角色前奏之前 ──
   for (const p of enabledEntries.filter((p) => p.role === 'user' || p.role === 'assistant')) {
-    head.push({ role: p.role, content: replaceMacros(p.content.trim(), ctx) })
+    head.push({
+      role: p.role,
+      content: replaceMacros(p.content.trim(), ctx),
+      _origins: [`预设预注入（${p.name}）`],
+    })
   }
 
   // ── 角色前奏（一条 user 消息，对齐旧版 characterPreludePrompt）：
   // before_char 世界书 → [Character] 角色定义（含示例对话原文）→ after_char 世界书 ──
   const preludeParts: string[] = []
-  if (wi.beforeChar.length) preludeParts.push(joinWI(wi.beforeChar))
+  const preludeMeta: string[] = []
+  if (wi.beforeChar.length) {
+    preludeParts.push(joinWI(wi.beforeChar))
+    preludeMeta.push(`世界书·角色前（${wiNames(wi.beforeChar)}）`)
+  }
   const charParts: string[] = ['[Character]', sysMain]
   // 示例对话按旧版方式作为角色定义的纯文本一部分（不占用消息轮次、不插 system 标题）
   const exampleText = textBody(character.mesExample, ctx)
   if (exampleText) charParts.push(exampleText)
   preludeParts.push(charParts.join('\n\n'))
-  if (wi.afterChar.length) preludeParts.push(joinWI(wi.afterChar))
+  preludeMeta.push(exampleText ? '角色前奏·[Character]（含示例对话）' : '角色前奏·[Character]')
+  if (wi.afterChar.length) {
+    preludeParts.push(joinWI(wi.afterChar))
+    preludeMeta.push(`世界书·角色后（${wiNames(wi.afterChar)}）`)
+  }
   if (preludeParts.some((p) => p.trim())) {
-    head.push({ role: 'user', content: preludeParts.join('\n\n') })
+    head.push({ role: 'user', content: preludeParts.join('\n\n'), _origins: preludeMeta })
   }
 
   // ── 历史滑窗 + 绑定记忆插入 ──
@@ -239,23 +287,36 @@ export function buildPrompt(
       memAfterNode.set(n, arr)
     }
   }
-  const out: ApiMessage[] = []
+  const out: AssembledMessage[] = []
   const winNodes: MsgNode[] = []
   for (const n of historyAll) if (windowSet.has(n)) winNodes.push(n)
   for (const n of winNodes) {
     const body = nodeBody(n, opts, ctx)
     if (!body) continue
-    out.push({ role: n.role === 'user' ? 'user' : 'assistant', content: body })
+    const floorLabel = n.parentId
+      ? `历史楼层·${n.role === 'user' ? '用户' : 'AI'}（${n.name || ''}）`
+      : `开场白（${n.name || character.name}）`
+    out.push({
+      role: n.role === 'user' ? 'user' : 'assistant',
+      content: body,
+      _origins: [floorLabel],
+    })
     // 绑定记忆（新站特性）：挂在对应 AI 楼之后；system 会打断后续同角色合并，与旧版语义不冲突
     const mems = memAfterNode.get(n)
     if (mems) {
-      for (const m of mems) out.push({ role: 'system', content: `【剧情记忆】\n${replaceMacros(m.summary.trim(), ctx)}` })
+      for (const m of mems) {
+        out.push({
+          role: 'system',
+          content: `【剧情记忆】\n${replaceMacros(m.summary.trim(), ctx)}`,
+          _origins: [`记忆·绑定（${m.summary.trim().slice(0, 12)}…）`],
+        })
+      }
     }
   }
 
-  // head（system 指令 + 预设 + 角色前奏）与历史楼层合并；@深度在最终数组上倒数插入，
+  // head（system 指令层 + 预设 + 角色前奏）与历史楼层合并；@深度在最终数组上倒数插入，
   // 对齐旧版 processMessageInjections + safeTargetLimit：插入点不得进入 head 区
-  const merged: ApiMessage[] = [...head, ...out]
+  const merged: AssembledMessage[] = [...head, ...out]
   const safeFloor = head.length
 
   // ── @深度世界书条目（逐字对齐旧版 processMessageInjections 的 At Depth 段，回归 R1）──
@@ -280,7 +341,11 @@ export function buildPrompt(
       }
     }
     if (targetIndex < safeFloor) targetIndex = safeFloor
-    merged.splice(targetIndex, 0, { role: d.role, content: replaceMacros(content, ctx) })
+    merged.splice(targetIndex, 0, {
+      role: d.role,
+      content: replaceMacros(content, ctx),
+      _origins: [`世界书·@深度注入（${d.comment?.trim() || 'Entry'}，depth=${d.depth}，${d.role}）`],
+    })
   }
 
   // ── user_top 世界书：前置进当前数组最后一条 user 消息（旧版顺序：在 @深度注入之后执行，
@@ -290,21 +355,33 @@ export function buildPrompt(
     for (let i = merged.length - 1; i >= 0; i--) {
       if (merged[i].role === 'user') { lastUser = i; break }
     }
-    if (lastUser >= 0) merged[lastUser].content = `${joinWI(wi.userTop)}\n\n${merged[lastUser].content}`
+    if (lastUser >= 0) {
+      merged[lastUser].content = `${joinWI(wi.userTop)}\n\n${merged[lastUser].content}`
+      const target = merged[lastUser]
+      target._origins = [`世界书·user_top 前置（${wiNames(wi.userTop)}）`, ...(target._origins ?? [])]
+    }
   }
 
   // ── 历史后指令（ST post_history_instructions）──
   const phi = textBody(character.postHistoryInstructions, ctx)
-  if (phi) merged.push({ role: 'system', content: phi })
+  if (phi) merged.push({ role: 'system', content: phi, _origins: ['卡 phi·post_history_instructions'] })
 
   // ── assistant_top 世界书：末尾 system「[Instructions for next message]」（对齐旧版）──
   if (wi.assistantTop.length) {
-    merged.push({ role: 'system', content: `[Instructions for next message]\n${joinWI(wi.assistantTop)}` })
+    merged.push({
+      role: 'system',
+      content: `[Instructions for next message]\n${joinWI(wi.assistantTop)}`,
+      _origins: [`世界书·assistant_top（${wiNames(wi.assistantTop)}）`],
+    })
   }
 
   // ── 一次性临时规范指令：放在历史末尾作为系统注记 ──
   if (opts.pendingInstruction?.trim()) {
-    merged.push({ role: 'system', content: `【本次回复需遵守的临时指令】\n${opts.pendingInstruction.trim()}` })
+    merged.push({
+      role: 'system',
+      content: `【本次回复需遵守的临时指令】\n${opts.pendingInstruction.trim()}`,
+      _origins: ['临时规范指令（随下轮发送）'],
+    })
   }
 
   // ── UI 模板：主模型在正文「之前」同步输出变量更新块（面板更新的第一主力）──
@@ -312,16 +389,19 @@ export function buildPrompt(
   // 面板全由副模型 runAuxTemplateAnalysis 每轮补全（实测思考模型会把面板字段规划写满思考链致正文零输出）。
   if (opts.uiTemplates?.length && opts.uiMainModelUpdates !== false) {
     const uiInstr = buildUiTemplateUpdateInstruction(opts.uiTemplates, opts.uiTemplateStates || {}, 'before')
-    if (uiInstr) merged.push({ role: 'system', content: uiInstr })
+    if (uiInstr) {
+      merged.push({ role: 'system', content: uiInstr, _origins: ['UI 更新指令（主模型同步模式）'] })
+    }
   }
 
   // ── 统一后处理（对齐旧版 5707-5714：先 postprocessContextMessages 合并连续同角色，
   //    再对每条消息跑发送层正则；system 不参与合并、也不经过正则）──
-  const post: ApiMessage[] = []
+  const post: AssembledMessage[] = []
   for (const msg of merged) {
     const prev = post[post.length - 1]
     if (prev && prev.role === msg.role && (msg.role === 'user' || msg.role === 'assistant')) {
       prev.content = [prev.content, msg.content].filter(Boolean).join('\n\n')
+      prev._origins = [...(prev._origins ?? []), ...(msg._origins ?? [])]
     } else {
       post.push({ ...msg })
     }
@@ -336,5 +416,35 @@ export function buildPrompt(
     }
   }
 
-  return post
+  return {
+    messages: post.map((m) => ({ role: m.role, content: m.content })),
+    trace: post.map((m) => ({ origins: m._origins ?? [] })),
+  }
+}
+
+/**
+ * 完整组装请求 messages（签名与行为与历史版本一致）。
+ */
+export function buildPrompt(
+  character: CharacterCard,
+  persona: Persona | undefined,
+  chainNodes: MsgNode[],
+  contextMessages: number,
+  opts: PromptOptions = {},
+): ApiMessage[] {
+  return assemble(character, persona, chainNodes, contextMessages, opts).messages
+}
+
+/**
+ * 组装请求 messages 并携带每条消息的来源标注（P2-16 开发者面板用）。
+ * trace 与返回的 messages 一一对应；连续同角色合并后 origins 顺序拼接。
+ */
+export function buildPromptTrace(
+  character: CharacterCard,
+  persona: Persona | undefined,
+  chainNodes: MsgNode[],
+  contextMessages: number,
+  opts: PromptOptions = {},
+): { messages: ApiMessage[]; trace: PromptTraceEntry[] } {
+  return assemble(character, persona, chainNodes, contextMessages, opts)
 }
