@@ -57,7 +57,21 @@ function keysText(e: WEntry): string {
   return Array.isArray(e.keys) ? e.keys.join(', ') : ''
 }
 function setKeys(i: number, text: string) {
-  update(i, { keys: text.split(/[,，\s]+/).map((k) => k.trim()).filter(Boolean) })
+  // 只按逗号/中文逗号/换行切分：按空白切会拆坏含空格的正则关键词（如 /a b/）（回归 R5）
+  update(i, { keys: text.split(/[,，\n]/).map((k) => k.trim()).filter(Boolean) })
+}
+function setScanDepth(i: number, raw: string) {
+  const t = raw.trim()
+  if (t === '' || Number.isNaN(Number(t))) {
+    // 清空 = 恢复"未设置"（引擎走默认 2），而不是 0（0 = 不扫描，仅常驻可激活）（回归 R4）
+    const next = [...items.value]
+    const copy = { ...next[i] } as Record<string, unknown>
+    delete copy.scanDepth
+    next[i] = copy as WEntry
+    items.value = next
+    return
+  }
+  update(i, { scanDepth: Math.max(0, Number(t)) })
 }
 function secText(e: WEntry): string {
   const sec = Array.isArray(e.secondaryKeys) ? e.secondaryKeys : Array.isArray(e.filter) ? e.filter : []
@@ -71,8 +85,19 @@ function logicOf(e: WEntry): string {
 }
 function positionOf(e: WEntry): string {
   const p = e.position
-  if (p === 'before_char' || p === 'after_char' || p === '@D') return p
-  if (typeof p === 'number' && (p === 3 || p === 4)) return '@D'
+  // 对齐旧版七位置（编辑器内以 '@D' 表示 at_depth）
+  const named = ['system_top', 'global_note', 'before_char', 'after_char', 'user_top', 'assistant_top', '@D']
+  if (typeof p === 'string') {
+    if (named.includes(p)) return p
+    if (p.startsWith('@') || /depth/.test(p)) return '@D'
+    return 'after_char'
+  }
+  if (typeof p === 'number') {
+    if (p === 0) return 'before_char'
+    if (p === 1) return 'after_char'
+    if (p === 2 || p === 3) return 'global_note'
+    return '@D'
+  }
   return 'after_char'
 }
 </script>
@@ -141,9 +166,13 @@ function positionOf(e: WEntry): string {
             <label class="switch-line" style="font-size: 0.76rem">
               注入位置
               <select class="input wb-sel" :value="positionOf(e)" @change="update(i, { position: ($event.target as HTMLSelectElement).value as unknown })">
+                <option value="system_top">系统顶部</option>
+                <option value="global_note">全局注释</option>
                 <option value="before_char">角色定义前</option>
                 <option value="after_char">角色定义后</option>
                 <option value="@D">@深度</option>
+                <option value="user_top">用户消息顶</option>
+                <option value="assistant_top">助手消息顶</option>
               </select>
             </label>
             <label v-if="positionOf(e) === '@D'" class="switch-line" style="font-size: 0.76rem; gap: 4px">
@@ -152,7 +181,7 @@ function positionOf(e: WEntry): string {
             </label>
             <label v-if="positionOf(e) === '@D'" class="switch-line" style="font-size: 0.76rem">
               角色
-              <select class="input wb-sel" :value="e.depthRole || 'system'" @change="update(i, { depthRole: ($event.target as HTMLSelectElement).value as 'system' | 'user' | 'assistant' })">
+              <select class="input wb-sel" :value="e.depthRole || 'user'" @change="update(i, { depthRole: ($event.target as HTMLSelectElement).value as 'system' | 'user' | 'assistant' })">
                 <option value="system">system</option>
                 <option value="user">user</option>
                 <option value="assistant">assistant</option>
@@ -164,7 +193,7 @@ function positionOf(e: WEntry): string {
             </label>
             <label class="switch-line" style="font-size: 0.76rem; gap: 4px">
               扫描深度
-              <input class="input wb-order" type="number" min="1" :value="e.scanDepth ?? 2" @change="update(i, { scanDepth: Math.max(1, Number(($event.target as HTMLInputElement).value) || 2) })" />
+              <input class="input wb-order" type="number" min="0" title="留空=默认 2；0=不扫描（仅常驻可激活）" :value="e.scanDepth ?? 2" @change="setScanDepth(i, ($event.target as HTMLInputElement).value)" />
             </label>
           </div>
           <div class="wb-row" style="gap: 16px">

@@ -19,7 +19,7 @@ export interface WorldInfoEntry {
   caseSensitive?: boolean
   matchWholeWords?: boolean
   constant?: boolean
-  /** 归一后统一为 'before_char' | 'after_char' | 'at_depth'；原始输入也可被 toActivated 防御性识别 */
+  /** 归一后统一为旧版七位置：system_top/global_note/before_char/after_char/user_top/assistant_top/at_depth */
   position?: string | number
   depth?: number
   depthRole?: 'system' | 'user' | 'assistant' | number
@@ -32,11 +32,16 @@ export interface WorldInfoEntry {
 
 export type WILogic = 'AND_ANY' | 'AND_ALL' | 'NOT_ANY' | 'NOT_ALL'
 
+/** 旧版世界书七位置 */
+export type WIPosition =
+  | 'system_top' | 'global_note' | 'before_char' | 'after_char'
+  | 'user_top' | 'assistant_top' | 'at_depth'
+
 export interface ActivatedEntry {
   content: string
   comment: string
   order: number
-  placement: 'before_char' | 'after_char' | 'depth'
+  placement: WIPosition
   depth: number
   depthRole: 'system' | 'user' | 'assistant'
 }
@@ -64,26 +69,26 @@ function splitKeys(v: unknown): string[] {
   return []
 }
 
-const POS_ALIAS: Record<string, string> = {
+// 位置别名表（对齐旧版 posNameMap，七位置全部保留，不再折叠语义）
+const POS_ALIAS: Record<string, WIPosition> = {
+  system_top: 'system_top',
+  // 作者注/全局注释类别名 → global_note（同旧版）
+  global_note: 'global_note',
+  an_top: 'global_note',
+  an_bottom: 'global_note',
+  author_note: 'global_note',
   before_char: 'before_char',
   before_character: 'before_char',
   character_top: 'before_char',
   before_examples: 'before_char',
   example_top: 'before_char',
-  // 新站无 system_top / global_note（作者注/系统顶）位置，语义最接近角色定义前
-  system_top: 'before_char',
-  global_note: 'before_char',
-  an_top: 'before_char',
-  author_note: 'before_char',
   after_char: 'after_char',
   after_character: 'after_char',
   character_bottom: 'after_char',
   after_examples: 'after_char',
   example_bottom: 'after_char',
-  an_bottom: 'after_char',
-  // 新站无 user_top / assistant_top 位置，落到角色定义后
-  user_top: 'after_char',
-  assistant_top: 'after_char',
+  user_top: 'user_top',
+  assistant_top: 'assistant_top',
   at_depth: 'at_depth',
   em_depth: 'at_depth',
   '@depth': 'at_depth',
@@ -91,10 +96,12 @@ const POS_ALIAS: Record<string, string> = {
 
 /**
  * 把任意来源的世界书条目归一为内部模型。
- * @param source 'st' = SillyTavern 卡（数字编码 0/1/2/3/4 中 2/3/4 均为 at_depth）；
- *               'legacy' = 旧版备份（数字 2/3 = global_note → before_char，4 = at_depth）
+ * 位置映射对齐旧版 normalizeWorldInfoEntry（字符串别名 + 数字 0/1/2/3/4）：
+ * 0 before_char、1 after_char、2/3 global_note、4 at_depth；无法识别时默认 at_depth。
+ * source 仅标记数据来源（ST 卡 / 旧版备份），位置规则与旧版一致，不做差异化映射。
  */
 export function normalizeWorldInfoEntry(raw: unknown, source: 'st' | 'legacy' = 'st'): WorldInfoEntry | null {
+  void source
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   // ST v3 大量字段嵌在 extensions 内，先拍平（顶层字段优先）
@@ -107,27 +114,31 @@ export function normalizeWorldInfoEntry(raw: unknown, source: 'st' | 'legacy' = 
     return undefined
   }
 
-  // ── 位置归一 ──
-  let position = 'after_char'
+  // ── 位置归一（对齐旧版：默认 at_depth）──
+  let position: WIPosition = 'at_depth'
   const rawPos = pick('position')
   if (typeof rawPos === 'string') {
     const p = rawPos.toLowerCase().replace(/ /g, '_')
-    if (p.startsWith('@')) position = 'at_depth'
-    else position = POS_ALIAS[p] ?? (/depth/.test(p) ? 'at_depth' : 'after_char')
+    if (p.startsWith('@') || /depth/.test(p)) position = 'at_depth'
+    else position = POS_ALIAS[p] ?? 'at_depth'
   } else if (typeof rawPos === 'number' || (typeof rawPos === 'string' && rawPos.trim() !== '' && !Number.isNaN(Number(rawPos)))) {
     const n = Number(rawPos)
+    // 旧版数字编码：0 before_char / 1 after_char / 2,3 global_note / 4 at_depth，其余 at_depth
     if (n === 0) position = 'before_char'
     else if (n === 1) position = 'after_char'
-    else if (n === 4) position = 'at_depth'
-    else if (n === 2 || n === 3) position = source === 'legacy' ? 'before_char' : 'at_depth'
+    else if (n === 2 || n === 3) position = 'global_note'
+    else position = 'at_depth'
   }
   // 编辑器产出的 '@4' 形式
   if (typeof r.position === 'string' && String(r.position).startsWith('@')) position = 'at_depth'
 
   // ── depthRole 归一（ST 数字：0 system,1 user,2 assistant）──
-  let depthRole: WorldInfoEntry['depthRole'] = 'system'
+  // 对齐旧版：@深度条目缺省以 user 角色注入（旧版 processMessageInjections 固定 role:'user'）；
+  // 仅当数据显式指定 system/0、assistant/2 时才覆盖默认值
+  let depthRole: WorldInfoEntry['depthRole'] = 'user'
   const rawRole = pick('depthRole', 'depth_role', 'role')
-  if (rawRole === 'user' || rawRole === 1) depthRole = 'user'
+  if (rawRole === 'system' || rawRole === 0) depthRole = 'system'
+  else if (rawRole === 'user' || rawRole === 1) depthRole = 'user'
   else if (rawRole === 'assistant' || rawRole === 2) depthRole = 'assistant'
 
   // ── 选择逻辑归一（ST 数字：0 AND_ANY,1 AND_ALL,2 NOT_ANY,3 NOT_ALL）──
@@ -237,24 +248,42 @@ function probPass(e: WorldInfoEntry): boolean {
   return p >= 100 || Math.random() * 100 < p
 }
 
-interface Activated { entry: WorldInfoEntry; placement: 'before_char' | 'after_char' | 'depth'; depth: number; depthRole: 'system' | 'user' | 'assistant' }
+interface Activated { entry: WorldInfoEntry; placement: WIPosition; depth: number; depthRole: 'system' | 'user' | 'assistant' }
 
-/** 位置 → 注入分组（防御性识别，正常数据已在 normalize 阶段归一） */
+/** 位置 → 注入分组（防御性识别，正常数据已在 normalize 阶段归一为七位置） */
 function toActivated(e: WorldInfoEntry): Activated {
-  let placement: Activated['placement'] = 'after_char'
+  let placement: WIPosition = 'at_depth'
   const pos = e.position
-  if (pos === 'before_char' || pos === 0) placement = 'before_char'
-  else if (pos === 'at_depth' || (typeof pos === 'string' && String(pos).startsWith('@'))) placement = 'depth'
-  else if (typeof pos === 'number' && pos >= 2) placement = 'depth'
-  let depthRole: Activated['depthRole'] = 'system'
-  if (e.depthRole === 'user' || e.depthRole === 1) depthRole = 'user'
+  if (typeof pos === 'string') {
+    if (pos.startsWith('@') || /depth/.test(pos)) placement = 'at_depth'
+    else placement = POS_ALIAS[pos] ?? 'at_depth'
+  } else if (typeof pos === 'number') {
+    if (pos === 0) placement = 'before_char'
+    else if (pos === 1) placement = 'after_char'
+    else if (pos === 2 || pos === 3) placement = 'global_note'
+    else placement = 'at_depth'
+  }
+  let depthRole: Activated['depthRole'] = 'user'
+  if (e.depthRole === 'system' || e.depthRole === 0) depthRole = 'system'
+  else if (e.depthRole === 'user' || e.depthRole === 1) depthRole = 'user'
   else if (e.depthRole === 'assistant' || e.depthRole === 2) depthRole = 'assistant'
   return { entry: e, placement, depth: typeof e.depth === 'number' ? e.depth : 4, depthRole }
 }
 
+/** 已激活、待注入的条目（携带条目名供旧版式 [条目名] 包裹） */
+export interface WIPlacedEntry {
+  comment: string
+  content: string
+  order: number
+}
+
 export interface WIResult {
-  beforeChar: string[]
-  afterChar: string[]
+  systemTop: WIPlacedEntry[]
+  globalNote: WIPlacedEntry[]
+  beforeChar: WIPlacedEntry[]
+  afterChar: WIPlacedEntry[]
+  userTop: WIPlacedEntry[]
+  assistantTop: WIPlacedEntry[]
   byDepth: { depth: number; role: 'system' | 'user' | 'assistant'; content: string; comment: string; order: number }[]
 }
 
@@ -278,7 +307,7 @@ export function resolveWorldInfo(
   maxRecursionSteps: number = DEFAULT_WI_RECURSION_STEPS,
 ): WIResult {
   const normalized = (entries || [])
-    .map((e) => (e && (e.position === 'before_char' || e.position === 'after_char' || e.position === 'at_depth') ? e : normalizeWorldInfoEntry(e)))
+    .map((e) => (e && typeof e.position === 'string' && POS_ALIAS[e.position] ? e : normalizeWorldInfoEntry(e)))
     .filter((e): e is WorldInfoEntry => !!e)
   const active = normalized.filter((e) => e.enabled !== false && String(e.content || '').trim())
 
@@ -289,8 +318,10 @@ export function resolveWorldInfo(
     if (activatedSet.has(e)) return false
     // 对齐旧版：条目未显式设 scanDepth 时用全局默认 2（只扫最近 2 楼），
     // 不再用「所有条目的最大扫描深度」当缺省值，避免个别大深度条目把其余条目窗口一并放大
-    const d = typeof e.scanDepth === 'number' ? e.scanDepth : 2
-    const windowText = source.slice(-Math.max(1, d)).join('\n')
+    const d = Math.max(0, typeof e.scanDepth === 'number' ? e.scanDepth : 2)
+    // 对齐旧版：scanDepth=0 的非常驻条目不参与扫描（窗口为零层）
+    if (!e.constant && d === 0) return false
+    const windowText = source.slice(-d).join('\n')
     if (!primaryHit(e, windowText) && !e.constant) return false
     if (!secondaryPass(e, windowText)) return false
     if (!probPass(e)) return false
@@ -314,20 +345,32 @@ export function resolveWorldInfo(
     if (!anyNew) break
   }
 
-  // 分组输出
-  const beforeChar: string[] = []
-  const afterChar: string[] = []
+  // 分组输出（对齐旧版七位置；组内按 order 升序）
+  const systemTop: WIPlacedEntry[] = []
+  const globalNote: WIPlacedEntry[] = []
+  const beforeChar: WIPlacedEntry[] = []
+  const afterChar: WIPlacedEntry[] = []
+  const userTop: WIPlacedEntry[] = []
+  const assistantTop: WIPlacedEntry[] = []
   const byDepth: WIResult['byDepth'] = []
 
   const sorted = [...activatedList].sort((a, b) => (a.entry.order ?? 100) - (b.entry.order ?? 100))
   for (const a of sorted) {
     const content = String(a.entry.content || '').trim()
     if (!content) continue
-    if (a.placement === 'before_char') beforeChar.push(content)
-    else if (a.placement === 'after_char') afterChar.push(content)
-    else byDepth.push({ depth: a.depth, role: a.depthRole, content, comment: a.entry.comment || '', order: a.entry.order ?? 100 })
+    const placed = { comment: a.entry.comment || '', content, order: a.entry.order ?? 100 }
+    switch (a.placement) {
+      case 'system_top': systemTop.push(placed); break
+      case 'global_note': globalNote.push(placed); break
+      case 'before_char': beforeChar.push(placed); break
+      case 'after_char': afterChar.push(placed); break
+      case 'user_top': userTop.push(placed); break
+      case 'assistant_top': assistantTop.push(placed); break
+      default:
+        byDepth.push({ depth: a.depth, role: a.depthRole, content, comment: a.entry.comment || '', order: a.entry.order ?? 100 })
+    }
   }
   byDepth.sort((a, b) => a.depth - b.depth || a.order - b.order)
 
-  return { beforeChar, afterChar, byDepth }
+  return { systemTop, globalNote, beforeChar, afterChar, userTop, assistantTop, byDepth }
 }

@@ -12,11 +12,18 @@
 import os
 import sys
 import json
-import tarfile
+import shutil
 import datetime
+from pathlib import Path
+
 import paramiko
 
-HOST, USER, PWD = "***.***.***.***", "root", "***REMOVED***"
+# 凭据单一来源：tools/secrets_local.py（不入库；模板见 secrets_local.example.py）
+try:
+    from secrets_local import HOST, USER, PWD  # noqa: F401
+except ImportError:
+    raise SystemExit("缺少 tools/secrets_local.py（HOST/USER/PWD），请复制 secrets_local.example.py 填写")
+
 REMOTE_DIR = "/opt/legacy/.rphub-data"
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -71,9 +78,12 @@ def main():
     # 5) 本地解压
     data_dir = os.path.join(BACKUP_ROOT, "data")
     os.makedirs(data_dir, exist_ok=True)
-    with tarfile.open(tar_local, "r:gz") as tf:
-        tf.extractall(data_dir)
+    # 5) 本地解压（filter="data" 为官方 TarSlip 防护：拒绝绝对路径/.. 越界/链接等特殊成员）
+    data_dir = os.path.join(BACKUP_ROOT, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    shutil.unpack_archive(str(tar_local), data_dir, "gztar", filter="data")
     n_files = sum(len(files) for _, _, files in os.walk(data_dir))
+    print(f"[extract] -> {data_dir} ({n_files} files)")
     print(f"[extract] -> {data_dir} ({n_files} files)")
 
     # 6) 写 manifest
@@ -86,8 +96,8 @@ def main():
         "tar_mb": round(size_mb, 1),
         "local_files": n_files,
     }
-    with open(os.path.join(BACKUP_ROOT, "manifest.json"), "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    manifest_path = os.path.join(BACKUP_ROOT, "manifest.json")
+    Path(manifest_path).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if not keep_tar:
         os.remove(tar_local)

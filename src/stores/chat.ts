@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { db } from '../db'
-import type { ChatSession, CharacterCard, MsgNode, Persona } from '../types'
+import type { ChatSession, CharacterCard, MemoryEntry, MsgNode, Persona } from '../types'
 import { uuid } from '../lib/id'
 import { streamChat, chatOnce, type ApiConfig } from '../lib/api'
 import { buildPrompt } from '../lib/prompt'
@@ -396,6 +396,34 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 组装注入用记忆（主发送/续写同源，回归 R3）：向量模式按最近对话检索语义相关条目，
+   * 检索失败或未配 embedding 时回退全量总结条目（原文分片 chunk 不走全量注入）。
+   */
+  async function loadInjectionMemories(sessionId: string, recentText: string) {
+    const settings = useSettingsStore()
+    if (settings.settings.memoryMode === 'vector' && settings.settings.memoryEmbeddingModel) {
+      try {
+        return await searchVectorMemories(
+          {
+            baseUrl: settings.settings.apiBaseUrl,
+            apiKey: settings.settings.apiKey,
+            model: settings.settings.memoryEmbeddingModel,
+          },
+          [sessionId, 'global'],
+          recentText || ' ',
+          settings.settings.memoryVectorTopK || 8,
+        )
+      } catch {
+        // 向量检索失败时回退总结模式
+      }
+    }
+    return (await db.memories
+      .where('sessionId')
+      .anyOf([sessionId, 'global'])
+      .toArray()).filter((m) => m.kind !== 'chunk')
+  }
+
   /** 组装上下文并流式生成填充既有 assistant 占位节点 */
   async function generateInto(
     s: ChatSession,
@@ -441,40 +469,14 @@ export const useChatStore = defineStore('chat', () => {
     // 记忆/好感度/提示词组装：任一步失败都不能把占位节点卡在 streaming 态
     let messages: ReturnType<typeof buildPrompt>
     try {
-      let memories
-      if (settings.settings.memoryMode === 'vector' && settings.settings.memoryEmbeddingModel) {
-        // 向量模式：用最近对话作为 query 检索语义相关记忆
-        try {
-          const recentText = path
-            .slice(-6)
-            .map((n) => parseCot(n.content || '').main)
-            .filter(Boolean)
-            .join('\n')
-            .slice(0, 2000)
-          memories = await searchVectorMemories(
-            {
-              baseUrl: settings.settings.apiBaseUrl,
-              apiKey: settings.settings.apiKey,
-              model: settings.settings.memoryEmbeddingModel,
-            },
-            [s.id, 'global'],
-            recentText || ' ',
-            settings.settings.memoryVectorTopK || 8,
-          )
-        } catch {
-          // 向量检索失败时回退到总结模式（全量注入总结条目；原文分片 chunk 不走全量注入）
-          memories = (await db.memories
-            .where('sessionId')
-            .anyOf([s.id, 'global'])
-            .toArray()).filter((m) => m.kind !== 'chunk')
-        }
-      } else {
-        // 总结模式：全量注入总结条目（由 prompt.ts 按预算分配）；原文分片仅向量模式使用
-        memories = (await db.memories
-          .where('sessionId')
-          .anyOf([s.id, 'global'])
-          .toArray()).filter((m) => m.kind !== 'chunk')
-      }
+      // 记忆注入与续写同源（loadInjectionMemories）：向量模式按最近对话检索，失败回退总结全量
+      const recentText = path
+        .slice(-6)
+        .map((n) => parseCot(n.content || '').main)
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 2000)
+      const memories = await loadInjectionMemories(s.id, recentText)
 
       // 好感度状态行（每个已追踪 NPC 一条）
       let affinityLines: string[] = []
@@ -717,10 +719,28 @@ export const useChatStore = defineStore('chat', () => {
     // 变量回写规则（与主生成同源）
     const syncRules = [...builtinStateSyncRules(), ...normalizeStateSyncRules(char.stateSyncRules)]
     // 构建提示词：历史里已带最后一条 AI 消息，不再重复发送其正文
+    // 预设/记忆/发送层正则与主生成同源注入，避免续写看到与主发送不一致的上下文（回归 R3）
+    const recentText = chain
+      .slice(-6)
+      .map((n) => parseCot(n.content || '').main)
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 2000)
+    let memories: MemoryEntry[] = []
+    try {
+      memories = await loadInjectionMemories(s.id, recentText)
+    } catch {
+      /* 记忆加载失败不阻塞续写 */
+    }
     const msgs = buildPrompt(char, persona ?? undefined, chain, settings.settings.contextMessages, {
+      regexScripts: char.regexScripts,
+      regexEnabled: settings.settings.regexEnabled !== false,
+      memories,
+      memoryCharLimit: settings.settings.memoryCharLimit || 1500,
       uiTemplates: uiTpls,
       uiTemplateStates: uiStates,
       stateSyncRules: syncRules,
+      promptEntries: (settings.settings.promptEntries || []).filter((p) => p.enabled),
     })
     if (lastAi.content.trim()) {
       msgs.push({
@@ -809,7 +829,11 @@ export const useChatStore = defineStore('chat', () => {
     const path: MsgNode[] = []
     let cur: MsgNode | undefined = s.activeNodeId ? s.nodes[s.activeNodeId] : undefined
     while (cur) { path.unshift(cur); cur = cur.parentId ? s.nodes[cur.parentId] : undefined }
-    const messages = buildPrompt(char, persona ?? undefined, path, settings.settings.contextMessages).filter(m => m.role !== 'system')
+    // 发送层正则与主生成同源（回归 R3）：代入看到的楼层文本与主发送口径一致
+    const messages = buildPrompt(char, persona ?? undefined, path, settings.settings.contextMessages, {
+      regexScripts: char.regexScripts,
+      regexEnabled: settings.settings.regexEnabled !== false,
+    }).filter(m => m.role !== 'system')
     // 过滤 system 后补一条精简指令：带上用户人设，否则代入时不知道"我是谁"
     messages.unshift({
       role: 'system',

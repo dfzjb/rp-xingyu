@@ -6,6 +6,9 @@ dist/
 # 体积庞大的服务端全量备份（含全部角色卡与聊天记录，不入库）
 tools/server_backup_*/
 
+# 服务器凭据（本地私有，模板见 tools/secrets_local.example.py）
+tools/secrets_local.py
+
 # 本地联调夹具：从服务端拉取的真实用户数据
 tools/test_fixture/
 

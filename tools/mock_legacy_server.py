@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import shutil
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,11 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE_DIR = os.path.join(BASE, 'test_fixture', 'user_data')
 TRASH_DIR = os.path.join(BASE, 'test_fixture', '.trash')
 DIST_DIR = os.path.normpath(os.path.join(BASE, '..', 'dist'))
+
+
+def _random_mock_key() -> str:
+    """每次调用随机生成 mock key（本地黑盒测试用；不在源码中保存任何固定凭据）"""
+    return 'sk-mock-' + secrets.token_hex(12)
 
 MOCK_REPLY = (
     "<think>用户提到了海边，我应该把场景引向海风酒馆，"
@@ -85,7 +91,7 @@ class MockHandler(SimpleHTTPRequestHandler):
                 return
             keys = self._load_keys()
             # 模拟 df_api_account.json（服务端存的密钥文件，客户端会带入设置）
-            keys['df_api_account'] = {'email': account, 'api_key': 'sk-mock-test-key-1234567890', 'created_at': 1756000000}
+            keys['df_api_account'] = {'email': account, 'api_key': _random_mock_key(), 'created_at': 1756000000}
             self._json({'ok': True, 'account': account, 'key_count': len(keys), 'keys': keys})
             return
 
@@ -130,7 +136,7 @@ class MockHandler(SimpleHTTPRequestHandler):
             return
         if self.path == '/api/dev/fixture-keys':
             keys = self._load_keys()
-            keys['df_api_account'] = {'email': 'fixture@test', 'api_key': 'sk-mock-test-key-1234567890', 'created_at': 1756000000}
+            keys['df_api_account'] = {'email': 'fixture@test', 'api_key': _random_mock_key(), 'created_at': 1756000000}
             self._json({'ok': True, 'account': 'fixture', 'keys': keys})
             return
         if self.path == '/plaza/index.json':

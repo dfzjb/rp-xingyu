@@ -4,20 +4,7 @@ import { db, DEFAULT_SETTINGS, getSettings, saveSettings } from '../db'
 import type { PromptPreset, Settings } from '../types'
 import { fetchModels, normalizeBaseUrl } from '../lib/api'
 import { deepPlain } from '../lib/plain'
-import { BUILTIN_CORE_PRESETS, BUILTIN_MANAGED_PRESETS } from '../lib/builtinPresets'
-
-const BUILTIN_NAME_BY_KEY: Record<string, string> = {
-  nsfw: 'NSFW 增强',
-  antiRobbery: '防抢话',
-  antiDeification: '防神化',
-  antiRepeat: '防重复',
-  personalityCore: '人格内核',
-  writingStyle: '文风（抗八股）',
-  timestamp: '时间戳',
-  secondPerson: '第二人称',
-  thirdPerson: '第三人称',
-  prohibited: '禁止规则',
-}
+import { BUILTIN_CORE_PRESETS, BUILTIN_MANAGED_PRESETS, builtinCoreDefaultEnabled, rebuildWithFactoryBuiltinEntries } from '../lib/builtinPresets'
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({ ...DEFAULT_SETTINGS })
@@ -88,8 +75,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
   /**
    * 内置预设条目同步（旧版 syncBuiltinPreset 语义）：
-   * 按 builtinKey 确保存在、不重复；核心组保持在最前；管理组默认停用；
-   * 用户对内置条目的启停/编辑状态保留。
+   * 按 builtinKey 确保存在、不重复；核心组保持在最前（出厂仅破限启用，few-shot 预注入默认停用——P0-5 方案A）；
+   * 管理组默认停用；用户对内置条目的启停/编辑状态保留（只补不覆盖）。
    */
   function syncBuiltinPromptEntries() {
     const s = settings.value
@@ -108,7 +95,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (!byKey.has(key)) {
         entries.splice(insertAt, 0, {
           id: key, name: def.name, content: def.content,
-          enabled: true, role: def.role as PromptPreset['role'],
+          enabled: builtinCoreDefaultEnabled(def.name), role: def.role as PromptPreset['role'],
           builtinKey: key, builtin: true,
         })
         byKey.set(key, insertAt)
@@ -123,7 +110,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (byKey.has(bk)) continue
       entries.push({
         id: bk,
-        name: BUILTIN_NAME_BY_KEY[def.builtinKey] || def.name || def.builtinKey,
+        name: def.name || def.builtinKey,
         content: def.content,
         enabled: false,
         role: def.role === 'user' || def.role === 'assistant' ? def.role : 'system',
@@ -138,6 +125,19 @@ export const useSettingsStore = defineStore('settings', () => {
       void saveSettings({ promptEntries: entries })
     }
     settings.value = { ...settings.value, promptEntries: entries }
+  }
+
+  /**
+   * 重置内置预设为出厂状态（内容=原文、启停=出厂默认；用户自建条目原样保留）。
+   * syncBuiltinPromptEntries 只补不覆盖——内置条目的默认启停/文案调整需经此操作应用到存量数据。
+   */
+  async function resetBuiltinPromptEntries() {
+    const rebuilt = rebuildWithFactoryBuiltinEntries(
+      deepPlain(settings.value.promptEntries || []) as (PromptPreset & { builtinKey?: string; builtin?: boolean })[],
+    )
+    const list = rebuilt.list as (PromptPreset & { builtinKey?: string; builtin?: boolean })[]
+    settings.value = { ...settings.value, promptEntries: list }
+    await saveSettings({ promptEntries: list })
   }
 
   async function patch(p: Partial<Settings>) {
@@ -184,6 +184,6 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings, loaded, modelsCache, fetchingModels, activeModel, normalizedBase,
     imageModelsCache, videoModelsCache,
-    load, patch, refreshModels, refreshImageModels, refreshVideoModels,
+    load, patch, resetBuiltinPromptEntries, refreshModels, refreshImageModels, refreshVideoModels,
   }
 })
