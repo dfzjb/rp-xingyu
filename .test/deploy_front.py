@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""前端产物部署（仅 dist → /www/wwwroot/rp.dfzjb.site/new/，server 未变更不动）
+"""前端产物部署（仅 dist → /www/wwwroot/xy.dfzjb.site/new/，server 未变更不动）
 
 流程：服务器端备份旧 index.html → SFTP 上传 assets/ 等资源 → 最后覆盖 index.html
 （Vite 文件名带哈希，先传资源后换入口，访客不会加载到半新半旧的组合）
@@ -19,7 +19,7 @@ from secrets_local import HOST, USER, PWD  # noqa: E402  (凭据单一来源，�
 
 RP_SITE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 DIST = os.path.join(RP_SITE, 'dist')
-REMOTE_DIR = '/www/wwwroot/rp.dfzjb.site/new'
+REMOTE_DIR = '/www/wwwroot/xy.dfzjb.site/new'
 STAMP = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
 
@@ -86,14 +86,14 @@ def main():
     remote_hash = out.split()[0] if out else ''
     print(f"[hash] local={local_hash[:16]}… remote={remote_hash[:16]}… match={remote_hash == local_hash}")
 
-    rc, out, err = run("curl -so /dev/null -w '%{http_code}' https://rp.dfzjb.site/new/")
-    print(f"[page] https://rp.dfzjb.site/new/ -> {out}")
+    rc, out, err = run("curl -so /dev/null -w '%{http_code}' https://xy.dfzjb.site/")
+    print(f"[page] https://xy.dfzjb.site/ -> {out}")
 
     # 取入口里引用的首个 assets 文件验证 200（immutable 缓存路径）
-    rc, out, _ = run("curl -s https://rp.dfzjb.site/new/ | grep -o 'assets/index-[^\"]*\\.js' | head -1")
+    rc, out, _ = run("curl -s https://xy.dfzjb.site/ | grep -o 'assets/index-[^\"]*\\.js' | head -1")
     first_asset = out.strip()
     if first_asset:
-        rc, code, _ = run(f"curl -so /dev/null -w '%{{http_code}}' https://rp.dfzjb.site/new/{first_asset}")
+        rc, code, _ = run(f"curl -so /dev/null -w '%{{http_code}}' https://xy.dfzjb.site/{first_asset}")
         print(f"[asset] /new/{first_asset} -> {code}")
     else:
         print('[asset] 未能从线上入口解析出资源名（检查 grep）')

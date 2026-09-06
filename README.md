@@ -13,7 +13,7 @@
 
 ![主界面](docs/images/home-light.png)
 
-**在线体验**：[rp.dfzjb.site/new](https://rp.dfzjb.site/new/) （站主实例，自带 API Key 即可直接使用）
+**在线体验**：[xy.dfzjb.site](https://xy.dfzjb.site/) （站主实例，自带 API Key 即可直接使用）
 
 ## 功能一览
 

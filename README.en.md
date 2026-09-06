@@ -13,7 +13,7 @@ A local-first AI roleplay web app: everything lives in your browser — zero use
 
 ![Main screen](docs/images/home-light.png)
 
-**Live demo**: [rp.dfzjb.site/new](https://rp.dfzjb.site/new/) (owner-run instance — bring your own OpenAI-compatible API key)
+**Live demo**: [xy.dfzjb.site](https://xy.dfzjb.site/) (owner-run instance — bring your own OpenAI-compatible API key)
 
 ## Features
 
