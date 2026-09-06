@@ -1,8 +1,8 @@
 /**
- * 世界书引擎（SillyTavern 语义兼容 + 旧版字段归一）：
+ * 世界书引擎（SillyTavern 语义兼容 + 字段归一）：
  * 常驻/关键词/次要过滤词+逻辑/概率/扫描深度/@深度注入/递归激活。
  *
- * 数据进入引擎前一律先过 normalizeWorldInfoEntry：把 ST v2/v3 卡、旧版备份、
+ * 数据进入引擎前一律先过 normalizeWorldInfoEntry：把 ST v2/v3 卡、导入数据、
  * 编辑器产出的异构字段（extensions 嵌套、snake/camel、字符串/数字位置编码）
  * 归一到统一内部模型，避免「字段对不上 → 静默落默认值」。
  */
@@ -19,7 +19,7 @@ export interface WorldInfoEntry {
   caseSensitive?: boolean
   matchWholeWords?: boolean
   constant?: boolean
-  /** 归一后统一为旧版七位置：system_top/global_note/before_char/after_char/user_top/assistant_top/at_depth */
+  /** 归一后统一为七位置：system_top/global_note/before_char/after_char/user_top/assistant_top/at_depth */
   position?: string | number
   depth?: number
   depthRole?: 'system' | 'user' | 'assistant' | number
@@ -32,7 +32,7 @@ export interface WorldInfoEntry {
 
 export type WILogic = 'AND_ANY' | 'AND_ALL' | 'NOT_ANY' | 'NOT_ALL'
 
-/** 旧版世界书七位置 */
+/** 世界书七位置 */
 export type WIPosition =
   | 'system_top' | 'global_note' | 'before_char' | 'after_char'
   | 'user_top' | 'assistant_top' | 'at_depth'
@@ -46,7 +46,7 @@ export interface ActivatedEntry {
   depthRole: 'system' | 'user' | 'assistant'
 }
 
-// ── 归一化层（防腐层，对齐旧版 normalizeWorldInfoEntry）──
+// ── 归一化层（防腐层）──
 
 function toBool(v: unknown, dflt = false): boolean {
   if (v === undefined || v === null || v === '') return dflt
@@ -69,10 +69,10 @@ function splitKeys(v: unknown): string[] {
   return []
 }
 
-// 位置别名表（对齐旧版 posNameMap，七位置全部保留，不再折叠语义）
+// 位置别名表（七位置全部保留，不再折叠语义）
 const POS_ALIAS: Record<string, WIPosition> = {
   system_top: 'system_top',
-  // 作者注/全局注释类别名 → global_note（同旧版）
+  // 作者注/全局注释类别名 → global_note
   global_note: 'global_note',
   an_top: 'global_note',
   an_bottom: 'global_note',
@@ -96,9 +96,9 @@ const POS_ALIAS: Record<string, WIPosition> = {
 
 /**
  * 把任意来源的世界书条目归一为内部模型。
- * 位置映射对齐旧版 normalizeWorldInfoEntry（字符串别名 + 数字 0/1/2/3/4）：
+ * 位置映射（字符串别名 + 数字 0/1/2/3/4）：
  * 0 before_char、1 after_char、2/3 global_note、4 at_depth；无法识别时默认 at_depth。
- * source 仅标记数据来源（ST 卡 / 旧版备份），位置规则与旧版一致，不做差异化映射。
+ * source 仅标记数据来源（ST 卡 / 导入数据），位置规则统一，不做差异化映射。
  */
 export function normalizeWorldInfoEntry(raw: unknown, source: 'st' | 'legacy' = 'st'): WorldInfoEntry | null {
   void source
@@ -114,7 +114,7 @@ export function normalizeWorldInfoEntry(raw: unknown, source: 'st' | 'legacy' = 
     return undefined
   }
 
-  // ── 位置归一（对齐旧版：默认 at_depth）──
+  // ── 位置归一（默认 at_depth）──
   let position: WIPosition = 'at_depth'
   const rawPos = pick('position')
   if (typeof rawPos === 'string') {
@@ -123,7 +123,7 @@ export function normalizeWorldInfoEntry(raw: unknown, source: 'st' | 'legacy' = 
     else position = POS_ALIAS[p] ?? 'at_depth'
   } else if (typeof rawPos === 'number' || (typeof rawPos === 'string' && rawPos.trim() !== '' && !Number.isNaN(Number(rawPos)))) {
     const n = Number(rawPos)
-    // 旧版数字编码：0 before_char / 1 after_char / 2,3 global_note / 4 at_depth，其余 at_depth
+    // 数字编码：0 before_char / 1 after_char / 2,3 global_note / 4 at_depth，其余 at_depth
     if (n === 0) position = 'before_char'
     else if (n === 1) position = 'after_char'
     else if (n === 2 || n === 3) position = 'global_note'
@@ -133,7 +133,7 @@ export function normalizeWorldInfoEntry(raw: unknown, source: 'st' | 'legacy' = 
   if (typeof r.position === 'string' && String(r.position).startsWith('@')) position = 'at_depth'
 
   // ── depthRole 归一（ST 数字：0 system,1 user,2 assistant）──
-  // 对齐旧版：@深度条目缺省以 user 角色注入（旧版 processMessageInjections 固定 role:'user'）；
+  // @深度条目缺省以 user 角色注入；
   // 仅当数据显式指定 system/0、assistant/2 时才覆盖默认值
   let depthRole: WorldInfoEntry['depthRole'] = 'user'
   const rawRole = pick('depthRole', 'depth_role', 'role')
@@ -270,7 +270,7 @@ function toActivated(e: WorldInfoEntry): Activated {
   return { entry: e, placement, depth: typeof e.depth === 'number' ? e.depth : 4, depthRole }
 }
 
-/** 已激活、待注入的条目（携带条目名供旧版式 [条目名] 包裹） */
+/** 已激活、待注入的条目（携带条目名供 [条目名] 包裹） */
 export interface WIPlacedEntry {
   comment: string
   content: string
@@ -289,7 +289,7 @@ export interface WIResult {
 
 /**
  * 默认递归激活步数。
- * 对齐旧版：旧版世界书只对对话楼层做一轮关键词扫描，不存在「已激活条目内容再去激活别的条目」
+ * 只对对话楼层做一轮关键词扫描，不存在「已激活条目内容再去激活别的条目」
  * 的链式扩散，故默认 0（关闭递归），避免一条总纲条目把整本书无关条目链式拉进 prompt。
  * 需要 ST 式递归扫描时由调用方显式传入 >0 的步数。
  */
@@ -316,10 +316,10 @@ export function resolveWorldInfo(
 
   function tryActivate(e: WorldInfoEntry, source: string[]): boolean {
     if (activatedSet.has(e)) return false
-    // 对齐旧版：条目未显式设 scanDepth 时用全局默认 2（只扫最近 2 楼），
+    // 条目未显式设 scanDepth 时用全局默认 2（只扫最近 2 楼），
     // 不再用「所有条目的最大扫描深度」当缺省值，避免个别大深度条目把其余条目窗口一并放大
     const d = Math.max(0, typeof e.scanDepth === 'number' ? e.scanDepth : 2)
-    // 对齐旧版：scanDepth=0 的非常驻条目不参与扫描（窗口为零层）
+    // scanDepth=0 的非常驻条目不参与扫描（窗口为零层）
     if (!e.constant && d === 0) return false
     const windowText = source.slice(-d).join('\n')
     if (!primaryHit(e, windowText) && !e.constant) return false
@@ -345,7 +345,7 @@ export function resolveWorldInfo(
     if (!anyNew) break
   }
 
-  // 分组输出（对齐旧版七位置；组内按 order 升序）
+  // 分组输出（七位置；组内按 order 升序）
   const systemTop: WIPlacedEntry[] = []
   const globalNote: WIPlacedEntry[] = []
   const beforeChar: WIPlacedEntry[] = []

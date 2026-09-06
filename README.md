@@ -66,7 +66,7 @@
 - 端到端加密：房间消息在浏览器内用房间码派生密钥加密，中继只见密文、**零存储零日志**；战役只存房主浏览器，可一键恢复重开
 
 ### 数据管理
-- `legacy_backup_*.json` 全库备份导入导出（与旧版同构互导）；酒馆 JSONL 聊天记录导入；用量统计
+- 全库备份导入导出（`rp-site-backup` 格式 JSON）；酒馆 JSONL 聊天记录导入；用量统计
 
 ## 界面预览
 
@@ -103,26 +103,21 @@ npm run dev        # http://127.0.0.1:5273
 - **GitHub Pages**：仓库已内置 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)——推送到 main 自动构建发布；仓库 Settings → Pages → Source 选 **GitHub Actions** 即可
 - **自建服务组件**（可选）：在线跑团中继 `npm run server`（唯一依赖 ws，端口 8787）、广场服务 `npm run plaza`（零依赖，端口 8788）；生产环境建议 systemd + nginx 反代，参见 [docs/plaza-server.md](./docs/plaza-server.md) 与 `deploy/`
 
-## 从 旧版 旧版迁移
-
-旧版用户可在「导入 / 导出」页选择 `legacy_backup_*.json` 一键恢复全部角色卡与聊天记录；新站导出的备份同样可被旧版导入，双向互通。
-
 ## 测试
 
 ```bash
-npm test           # Vitest，304 项单元测试（引擎层 / db 持久化 / 跑团 / 广场服务 / 旧版迁移）
+npm test           # Vitest，单元测试（引擎层 / db 持久化 / 跑团 / 广场服务）
 npm run typecheck  # vue-tsc 类型检查
 ```
 
 ## 许可证
 
-本项目以 [CC BY-NC 4.0](./LICENSE)（署名-非商业性使用 4.0 国际）协议发布。内置预设文本沿用旧版 旧版（CC BY-NC 4.0 © ）的文本资源。
+本项目以 [CC BY-NC 4.0](./LICENSE)（署名-非商业性使用 4.0 国际）协议发布。
 
 ## 致谢
 
 - [SillyTavern](https://github.com/SillyTavern/SillyTavern) —— 角色卡生态与设计思路参考
 - Artemis —— 设计思路借鉴
-- 旧版 旧版（© ）—— 内置预设文本来源与本项目的直接前身
 
 ## 免责声明
 

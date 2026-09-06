@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 单条消息气泡：markdown / 思维链折叠 / 图片附件 / 旧版 HTML 消息 sandbox iframe /
+ * 单条消息气泡：markdown / 思维链折叠 / 图片附件 / 整页 HTML 消息 sandbox iframe /
  * 楼层与字数 / 编辑 / 删除 / 重roll / 分支切换
  */
 import { computed, ref } from 'vue'
@@ -36,9 +36,9 @@ const syncRules = computed(() => {
   return [...builtinStateSyncRules(), ...normalizeStateSyncRules(char?.stateSyncRules)]
 })
 
-// 旧版迁移消息里已渲染的 UI 模板块快照（完整容器 HTML，原样 v-html 展示）
+// 历史消息里已渲染的 UI 模板块快照（完整容器 HTML，原样 v-html 展示）
 interface UiTplBlock { top: string[]; bottom: string[]; updatedAt?: number }
-const legacyTplBlocks = computed<UiTplBlock | null>(() => {
+const snapshotTplBlocks = computed<UiTplBlock | null>(() => {
   const raw = (props.node.extra as Record<string, unknown> | undefined)?.uiTemplateBlocks
   if (!raw || typeof raw !== 'object') return null
   const b = raw as Record<string, unknown>
@@ -65,8 +65,8 @@ const liveTplBlocks = computed<{ top: string[]; bottom: string[] } | null>(() =>
 })
 
 // 实时块优先（变量始终最新），否则回落到迁移快照
-const tplTop = computed(() => liveTplBlocks.value?.top ?? legacyTplBlocks.value?.top ?? [])
-const tplBottom = computed(() => liveTplBlocks.value?.bottom ?? legacyTplBlocks.value?.bottom ?? [])
+const tplTop = computed(() => liveTplBlocks.value?.top ?? snapshotTplBlocks.value?.top ?? [])
+const tplBottom = computed(() => liveTplBlocks.value?.bottom ?? snapshotTplBlocks.value?.bottom ?? [])
 
 const parsed = computed(() => {
   const raw = stripStateSyncBlocks(props.node.content || '', syncRules.value)
@@ -163,7 +163,7 @@ const lightbox = defineModel<{ src: string } | null>('lightbox', { default: null
         </button>
       </div>
 
-      <!-- 独立 reasoning 字段（旧版部分消息） -->
+      <!-- 独立 reasoning 字段 -->
       <details v-if="node.reasoning" class="cot-block">
         <summary><BrainCircuit :size="13" /> 思维过程</summary>
         <div class="cot-content">{{ node.reasoning }}</div>
@@ -180,12 +180,12 @@ const lightbox = defineModel<{ src: string } | null>('lightbox', { default: null
         <!-- 空内容流式占位：打字指示点 -->
         <div v-if="node.streaming && !node.content && !parsed.main" class="typing-dots"><i /><i /><i /></div>
 
-        <!-- UI 模板块：top 位置（角色卡自带模板 / 旧版迁移快照） -->
+        <!-- UI 模板块：top 位置（角色卡自带模板 / 历史快照） -->
         <template v-if="tplTop.length">
           <div class="ui-tpl-block" v-html="tplTop.join('')" />
         </template>
 
-        <!-- 旧版整页 HTML 消息：默认仅活动楼层展开；可收起避免历史大面板霸屏 -->
+        <!-- 整页 HTML 消息：默认仅活动楼层展开；可收起避免历史大面板霸屏 -->
         <template v-if="isHtml">
           <button v-if="!htmlExpanded" class="btn sm html-toggle" @click="htmlUserToggled = true">
             <ChevronDown :size="13" /> 展开 UI 面板（HTML · {{ wordCount }} 字）

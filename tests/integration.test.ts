@@ -1,8 +1,6 @@
 import { reactive } from 'vue'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, db, exportAll, restoreAll, saveSettings } from '../src/db'
-import { parseLegacyBackupFile } from '../src/lib/migrate'
-import { exportLegacyBundle, sessionChainMessages } from '../src/lib/legacyExport'
 import type { CharacterCard, ChatSession, MsgNode } from '../src/types'
 
 function node(partial: Partial<MsgNode> & { id: string }): MsgNode {
@@ -99,78 +97,4 @@ describe('全库备份往返 exportAll → restoreAll', () => {
   })
 })
 
-describe('sessionChainMessages 消息树链路展开', () => {
-  it('root → … → activeNode 路径展开，兄弟分支不带出；extra 字段保留', () => {
-    const s = session('s1', 'c1', {
-      rootNodeId: 'n1',
-      activeNodeId: 'n3',
-      nodes: {
-        n1: node({ id: 'n1', role: 'assistant', name: '角色', content: '开场', isSelf: false, childrenIds: ['n2'] }),
-        n2: node({ id: 'n2', role: 'user', content: '主线发言', isSelf: true, parentId: 'n1', childrenIds: ['n3', 'n4'] }),
-        n3: node({ id: 'n3', role: 'assistant', name: '角色', content: '主线回复', isSelf: false, parentId: 'n2', extra: { uiTplState: { t: { hp: 1 } } } }),
-        n4: node({ id: 'n4', role: 'assistant', name: '角色', content: '重roll回复', isSelf: false, parentId: 'n2' }),
-      },
-    })
-    const chain = sessionChainMessages(s)
-    expect(chain.map((m) => m.content)).toEqual(['开场', '主线发言', '主线回复'])
-    // 老消息的 UI 态字段（extra 内容）原样摊平在消息顶层带回
-    expect(chain[2].uiTplState).toEqual({ t: { hp: 1 } })
 
-    // 切到兄弟分支 n4
-    const s2 = { ...s, activeNodeId: 'n4' }
-    expect(sessionChainMessages(s2).map((m) => m.content)).toEqual(['开场', '主线发言', '重roll回复'])
-    // 无活动节点 → 空数组
-    expect(sessionChainMessages({ ...s, activeNodeId: null })).toEqual([])
-  })
-})
-
-describe('exportLegacyBundle 新站 → 旧版同构导出', () => {
-  it('角色进 legacy_characters；主线与分支分开映射键', async () => {
-    await db.characters.put(card('c1', '角色一'))
-    await db.chats.put(session('c1', 'c1', {
-      rootNodeId: 'n1',
-      activeNodeId: 'n2',
-      nodes: {
-        n1: node({ id: 'n1', role: 'assistant', content: '开场', isSelf: false, childrenIds: ['n2'] }),
-        n2: node({ id: 'n2', role: 'user', content: '你好', isSelf: true, parentId: 'n1' }),
-      },
-    }))
-    await db.chats.put(session('c1__branch__br1', 'c1', {
-      name: '分支',
-      origin: 'new',
-      legacyBranchId: 'br1',
-      rootNodeId: 'n1',
-      activeNodeId: 'n1',
-      nodes: { n1: node({ id: 'n1', role: 'assistant', content: '分支开场', isSelf: false }) },
-    }))
-
-    const { d1, count } = await exportLegacyBundle()
-    expect(d1['legacy_characters']).toHaveLength(1)
-    expect((d1['legacy_chat_c1'] as Record<string, unknown>[]).map((m) => m.content)).toEqual(['开场', '你好'])
-    expect((d1['legacy_chat_c1__branch__br1'] as Record<string, unknown>[]).map((m) => m.content)).toEqual(['分支开场'])
-    expect(count).toBe(Object.keys(d1).length)
-  })
-})
-
-describe('parseLegacyBackupFile 旧版备份解析', () => {
-  it('d1+ls 结构合并：ls 只补缺键并尝试 JSON 反序列化', () => {
-    const obj = {
-      d1: { legacy_characters: [{ name: 'A' }] },
-      ls: {
-        legacy_characters: '不应覆盖',
-        legacy_user: '{"name":"旅人"}',
-        legacy_last_active_char: '3',
-      },
-    }
-    const merged = parseLegacyBackupFile(obj)
-    expect(merged.legacy_characters).toEqual([{ name: 'A' }])
-    expect(merged.legacy_user).toEqual({ name: '旅人' })
-    expect(merged.legacy_last_active_char).toBe(3) // '3' 是合法 JSON 数字，会被反序列化
-  })
-
-  it('平面表直接透传；两无结构抛错', () => {
-    expect(parseLegacyBackupFile({ legacy_characters: [] })).toEqual({ legacy_characters: [] })
-    expect(() => parseLegacyBackupFile({ foo: 1 })).toThrow('未找到旧版数据')
-    expect(() => parseLegacyBackupFile('str')).toThrow('不是有效 JSON 对象')
-  })
-})

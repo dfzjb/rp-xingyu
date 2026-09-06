@@ -1,40 +1,6 @@
-// 旧版 legacy_* 数据形状（迁移用；字段宽松处理，未知字段一律保留）
 import type { UiTemplate } from './lib/uitemplate'
 
-/** 旧版角色卡（服务端已把 .cards 池合并还原后的完整卡） */
-export interface LegacyCharacter {
-  name: string
-  description?: string
-  personality?: string
-  scenario?: string
-  first_mes?: string
-  creator_notes?: string
-  avatar?: string // data:image/*;base64,...
-  uuid: string
-  createdAt?: number
-  hash?: string
-  worldInfo?: unknown[]
-  regexScripts?: unknown[]
-  uiTemplates?: unknown[]
-  recentGenerationTimes?: number[]
-  [k: string]: unknown
-}
-
-/** 旧版消息（扁平结构，含大量 UI 态字段——实质字段之外的原样保留） */
-export interface LegacyMessage {
-  id?: string
-  role: string
-  name?: string
-  content?: string
-  reasoning?: string
-  avatar?: string | null
-  isSelf?: boolean | string // 旧版存的是 'True'/'False' 字符串
-  isTriggered?: boolean
-  imageAttachments?: { dataUrl: string; description?: string }[]
-  [k: string]: unknown
-}
-
-// ============ 新站原生模型 ============
+// ============ 核心模型 ============
 
 /** 新站消息：树节点（借鉴 Artemis tree.js 的结构，重新生成为兄弟节点） */
 export interface MsgNode {
@@ -57,15 +23,14 @@ export interface MsgNode {
 
 /** 新站会话：角色 × 会话（消息以 id→node 映射存储，当前链路 = 根→activeNode） */
 export interface ChatSession {
-  id: string // 旧版键名（`<charId>` / `<charId>__branch__<bid>`）或新会话 uuid
+  id: string // 新会话 uuid
   charUuid: string
-  name: string // 展示名：主线 / 原分支名 / 会话 N
+  name: string // 展示名：主线 / 会话名
   rootNodeId: string | null
   activeNodeId: string | null
   createdAt: number
   updatedAt: number
-  origin: 'main' | 'legacy-branch' | 'new'
-  legacyBranchId?: string
+  origin: 'main' | 'new'
   nodes: Record<string, MsgNode>
   /** UI 模板运行时变量状态（templateId → variables），由 AI 回复中的 <ui_template_updates> 驱动 */
   uiTemplateStates?: Record<string, Record<string, unknown>>
@@ -99,9 +64,9 @@ export interface CharacterCard {
   worldInfo: unknown[]
   regexScripts: unknown[]
   uiTemplates: UiTemplate[]
-  /** 变量回写规则（state-sync，正则驱动）：让非 旧版 方言的更新指令也能回写面板变量 */
+  /** 变量回写规则（state-sync，正则驱动）：让各类更新指令方言都能回写面板变量 */
   stateSyncRules?: unknown[]
-  /** 收藏置顶（旧版 ☆）：收藏的卡在角色列表/侧栏置顶 */
+  /** 收藏置顶：收藏的卡在角色列表/侧栏置顶 */
   fav?: boolean
   /** 收藏时间（同为收藏时按此排序，最近的更靠前） */
   favAt?: number
@@ -144,9 +109,9 @@ export interface Persona {
   avatar: string
 }
 
-/** kv 表：旧版其余键原样存档（无损兜底） */
+/** kv 表：通用键值存档（原样保留，不做结构化建模） */
 export interface KvRow {
-  key: string // 原 legacy_* 键名
+  key: string
   value: unknown
   updatedAt: number
 }
@@ -157,7 +122,7 @@ export interface ModelSlot {
 }
 
 /**
- * 提示词预设条目（对齐旧版模型）：有序列表，每条可独立启停。
+ * 提示词预设条目：有序列表，每条可独立启停。
  * role=system 拼入系统提示末尾；user/assistant 作为消息追加在历史之后。
  */
 export interface PromptPreset {
@@ -168,7 +133,7 @@ export interface PromptPreset {
   role: 'system' | 'user' | 'assistant'
 }
 
-/** 会话记忆条目（对齐旧版经典记忆形状） */
+/** 会话记忆条目（经典记忆 + 向量分片两种形态） */
 export interface MemoryEntry {
   id: string
   sessionId: string // 会话 id；'global' 为全局记忆
@@ -185,12 +150,12 @@ export interface MemoryEntry {
   createdAt: number
   /** 向量模式：文本嵌入向量（由 embedding 模型生成） */
   embedding?: number[]
-  /** 向量模式（旧版对齐）：原文段落（"用户：…\n角色卡：…"拼接），注入时优先于 summary 展示 */
+  /** 向量模式：原文段落（"用户：…\n角色卡：…"拼接），注入时优先于 summary 展示 */
   paragraph?: string
-  /** 向量模式（旧版对齐）：来源角色与说话人 */
+  /** 向量模式：来源角色与说话人 */
   sourceRole?: 'user' | 'assistant' | 'mixed'
   sourceName?: string
-  /** 向量模式（旧版对齐）：内容指纹（归一化文本前 1000 字，去重用） */
+  /** 向量模式：内容指纹（归一化文本前 1000 字，去重用） */
   contentFingerprint?: string
   /** 向量检索得分（运行时）：注入时转为 similarity 百分比，不落库 */
   vectorScore?: number
@@ -221,7 +186,7 @@ export interface Settings {
   videoApiBaseUrl: string
   videoApiKey: string
   videoModel: string
-  /** 三模型槽：0=主对话 1=备用A 2=备用B（对齐旧版三槽设计） */
+  /** 三模型槽：0=主对话 1=备用A 2=备用B */
   modelSlots: ModelSlot[]
   activeSlot: number
   temperature: number
@@ -245,7 +210,7 @@ export interface Settings {
   memoryAutoPatrol: boolean // 记忆自动巡逻提炼开关
   memoryPatrolFloors: number // 每提炼一次所需的最低新增楼数
   memorySummaryStyle: 'brief' | 'balanced' | 'detailed' // 提炼详略档位
-  /** ── 记忆引擎（旧版参数语义）── */
+  /** ── 记忆引擎 ── */
   memoryEngineOn: boolean
   memoryMode: 'summary' | 'vector'
   memoryAuxModel: string // 总结模式副模型（空 = 用主模型）
@@ -253,8 +218,8 @@ export interface Settings {
   memoryVectorTopK: number // 向量模式检索条数
   memoryConcurrency: number // 补录并发数
   memoryKeepFloors: number // 保留最近楼层（不参与提炼）
-  /** ── UI 模板副模型分析（旧版"副模型分析"语义）──
-   * 主模型回复未携带变量更新块时，后台用副模型按最近楼层补一次变量分析（对齐旧版二次分析管线）。
+  /** ── UI 模板副模型分析 ──
+   * 主模型回复未携带变量更新块时，后台用副模型按最近楼层补一次变量分析。
    * 关闭后完全依赖主模型在正文里输出 <ui_template_updates>（或卡级规则方言）。 */
   uiTemplateAuxAnalysis: boolean
   /** 主模型同步更新面板变量（默认关 = 主模型纯扮演）。开启后主模型在回复最前同步输出
@@ -268,22 +233,15 @@ export interface Settings {
   uiAuxMaxTokens: number
   /** 整页面板托管重绘的输出上限 token（面板 HTML 很大，默认 16000） */
   panelAuxMaxTokens: number
-  /** 提示词预设条目（旧版 presets 模型）：有序、可启停、带角色 */
+  /** 提示词预设条目：有序、可启停、带角色 */
   promptEntries: PromptPreset[]
   lastActiveCharUuid?: string
   activePersonaUuid?: string
-  migratedFrom?: string // 旧版用户目录标识
-  migratedAt?: number
 }
 
-/** 迁移导入报告 */
-export interface MigrateReport {
-  characters: number
+/** 聊天导入报告 */
+export interface ImportReport {
   chats: number
-  branches: number
   messages: number
-  kvKeys: number
-  personas: number
-  unmatchedChats: string[]
   warnings: string[]
 }

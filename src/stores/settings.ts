@@ -4,7 +4,7 @@ import { db, DEFAULT_SETTINGS, getSettings, saveSettings } from '../db'
 import type { PromptPreset, Settings } from '../types'
 import { fetchModels, normalizeBaseUrl } from '../lib/api'
 import { deepPlain } from '../lib/plain'
-import { BUILTIN_CORE_PRESETS, BUILTIN_MANAGED_PRESETS, builtinCoreDefaultEnabled, builtinManagedDefaultEnabled, enforcePerspectiveMutex, rebuildWithFactoryBuiltinEntries } from '../lib/builtinPresets'
+import { enforcePerspectiveMutex } from '../lib/promptEntries'
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({ ...DEFAULT_SETTINGS })
@@ -17,7 +17,7 @@ export const useSettingsStore = defineStore('settings', () => {
   async function load() {
     if (loaded.value) return
     settings.value = await getSettings()
-    syncBuiltinPromptEntries()
+    await stripLegacyBuiltinEntries()
     loaded.value = true
     // 已配置 API Key 时自动拉取模型列表（静默失败，不打扰用户）
     if (settings.value.apiBaseUrl && settings.value.apiKey) {
@@ -74,76 +74,16 @@ export const useSettingsStore = defineStore('settings', () => {
   )
 
   /**
-   * 内置预设条目同步（旧版 syncBuiltinPreset 语义的内置优先版）：
-   * 按 builtinKey 确保存在、不重复，每次启动稳定分区重排为 核心组 → 管理组 → 用户条目
-   * （组内相对顺序不变，内置整体优先于自建内容）。已存在的内置条目保留用户的启停与内容修改；
-   * 缺失的补回并按出厂默认启用（默认全开，仅第三人称因人称互斥默认停用）。
+   * 清理历史内置预设条目：内置预设组已移除，带 builtinKey 的旧条目不再补发，
+   * 仅保留用户自建条目（存在残留时一次性清掉并存回）。
    */
-  function syncBuiltinPromptEntries() {
-    const s = settings.value
-    const entries = deepPlain(s.promptEntries || []) as (PromptPreset & { builtinKey?: string; builtin?: boolean })[]
-    const existingByKey = new Map<string, (PromptPreset & { builtinKey?: string; builtin?: boolean })>()
-    entries.forEach((e) => {
-      if (e.builtinKey && !existingByKey.has(e.builtinKey)) existingByKey.set(e.builtinKey, e)
-    })
-
-    const core: (PromptPreset & { builtinKey?: string; builtin?: boolean })[] = []
-    for (const def of BUILTIN_CORE_PRESETS) {
-      const key = 'core:' + def.name
-      const found = existingByKey.get(key)
-      if (found) {
-        core.push(found)
-      } else {
-        core.push({
-          id: key, name: def.name, content: def.content,
-          enabled: builtinCoreDefaultEnabled(def.name), role: def.role as PromptPreset['role'],
-          builtinKey: key, builtin: true,
-        })
-      }
+  async function stripLegacyBuiltinEntries() {
+    const entries = deepPlain(settings.value.promptEntries || []) as (PromptPreset & { builtinKey?: string })[]
+    const next = entries.filter((e) => !e.builtinKey)
+    if (next.length !== entries.length) {
+      await saveSettings({ promptEntries: next })
+      settings.value = { ...settings.value, promptEntries: next }
     }
-
-    const managed: (PromptPreset & { builtinKey?: string; builtin?: boolean })[] = []
-    for (const def of BUILTIN_MANAGED_PRESETS) {
-      const bk = 'managed:' + def.builtinKey
-      const found = existingByKey.get(bk)
-      if (found) {
-        managed.push(found)
-      } else {
-        managed.push({
-          id: bk,
-          name: def.name || def.builtinKey,
-          content: def.content,
-          enabled: builtinManagedDefaultEnabled(def.name || def.builtinKey),
-          role: def.role === 'user' || def.role === 'assistant' ? def.role : 'system',
-          builtinKey: bk,
-          builtin: true,
-        })
-      }
-    }
-
-    // 用户条目原样保留；带 builtinKey 但已不在内置清单中的旧残留条目随之清除（强制存在语义收敛为当前内置集）
-    const custom = entries.filter((e) => !e.builtinKey)
-    const next = [...core, ...managed, ...custom]
-
-    const beforeIds = entries.map((e) => e.id).join('\n')
-    const afterIds = next.map((e) => e.id).join('\n')
-    if (beforeIds !== afterIds) {
-      void saveSettings({ promptEntries: next })
-    }
-    settings.value = { ...settings.value, promptEntries: next }
-  }
-
-  /**
-   * 重置内置预设为出厂状态（内容=原文、启停=出厂默认；用户自建条目原样保留）。
-   * syncBuiltinPromptEntries 保留存量条目的启停与内容修改——出厂默认的启停/文案调整需经此操作应用。
-   */
-  async function resetBuiltinPromptEntries() {
-    const rebuilt = rebuildWithFactoryBuiltinEntries(
-      deepPlain(settings.value.promptEntries || []) as (PromptPreset & { builtinKey?: string; builtin?: boolean })[],
-    )
-    const list = rebuilt.list as (PromptPreset & { builtinKey?: string; builtin?: boolean })[]
-    settings.value = { ...settings.value, promptEntries: list }
-    await saveSettings({ promptEntries: list })
   }
 
   async function patch(p: Partial<Settings>) {
@@ -192,6 +132,6 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings, loaded, modelsCache, fetchingModels, activeModel, normalizedBase,
     imageModelsCache, videoModelsCache,
-    load, patch, resetBuiltinPromptEntries, refreshModels, refreshImageModels, refreshVideoModels,
+    load, patch, refreshModels, refreshImageModels, refreshVideoModels,
   }
 })

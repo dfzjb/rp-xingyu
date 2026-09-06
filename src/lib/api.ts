@@ -214,7 +214,7 @@ function parseSseText(
 /**
  * SSE 流式对话。返回 abort 函数。
  * onDone 收到完整文本（含 <think> 标签原样，由渲染层解析）。
- * 三通道兼容（对齐旧版）：
+ * 三通道兼容：
  *  1) text/event-stream：逐块 SSE；
  *  2) 普通 JSON 响应（非流式/被网关改写）：一次性解析 choices[0].message；
  *  3) 响应体是 SSE 文本但 Content-Type 不是 event-stream：手工按行解析兜底。

@@ -24,7 +24,7 @@ describe('normalizeRegexScript', () => {
     expect(s.flags).toBe('gi')
     expect(s.affectsUser).toBe(false)
     expect(s.affectsAI).toBe(true)
-    // 未指定 markdownOnly/promptOnly → 对齐旧版/ST：默认仅显示层，不进发给模型的 prompt
+    // 未指定 markdownOnly/promptOnly → 默认仅显示层（与 ST 一致），不进发给模型的 prompt
     expect(s.applyOnDisplay).toBe(true)
     expect(s.applyOnSend).toBe(false)
   })
@@ -42,21 +42,6 @@ describe('normalizeRegexScript', () => {
     const pr = normalizeRegexScript({ scriptName: 'b', findRegex: 'x', replaceString: 'y', promptOnly: true })!
     expect(pr.applyOnDisplay).toBe(false)
     expect(pr.applyOnSend).toBe(true)
-  })
-
-  it('旧版格式：regex/replacement 字段 + placement [1用户 2AI]', () => {
-    const s = normalizeRegexScript({ name: '旧脚本', regex: '旧', replacement: '新', placement: [1] })!
-    expect(s.pattern).toBe('旧')
-    expect(s.replace).toBe('新')
-    expect(s.affectsUser).toBe(true)
-    expect(s.affectsAI).toBe(false)
-    // 旧版脚本默认 markdownOnly/promptOnly 都不勾 → 仅显示层，发送层不执行（对齐旧版 processRegex）
-    expect(s.applyOnDisplay).toBe(true)
-    expect(s.applyOnSend).toBe(false)
-    // 旧版脚本显式 promptOnly 时才进发送层
-    const p = normalizeRegexScript({ name: '进prompt', regex: 'a', replacement: 'b', promptOnly: true })!
-    expect(p.applyOnDisplay).toBe(false)
-    expect(p.applyOnSend).toBe(true)
   })
 })
 
@@ -115,7 +100,7 @@ describe('applyRegexScripts 应用管线', () => {
   })
 })
 
-describe('内联修饰符兼容（(?i)(?s)(?m)，对齐旧版）', () => {
+describe('内联修饰符兼容（(?i)(?s)(?m)）', () => {
   it('(?i) 内联忽略大小写：JS 原生会 SyntaxError，剥离后正常匹配', () => {
     const s = [{ pattern: '(?i)dragon', replace: '龙' }]
     // 不剥离时 new RegExp('(?i)dragon') 直接抛错 → 脚本静默失效

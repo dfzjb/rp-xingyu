@@ -87,7 +87,7 @@ describe('世界书扫描源（回归 W1：AI 回复同样参与关键词命中�
   })
 })
 
-describe('@深度世界书真实插入（回归 W3，旧版 countdown<0 口径）', () => {
+describe('@深度世界书真实插入（回归 W3，countdown<0 口径）', () => {
   it('depth=2：插在倒数第 3 条对话消息之前（注入点之后还有 depth+1 条）', () => {
     const c = char({
       worldInfo: [{ keys: ['钥匙'], content: '【深度插入】', position: 'at_depth', depth: 2, depthRole: 'system', scanDepth: 20 }],
@@ -95,7 +95,7 @@ describe('@深度世界书真实插入（回归 W3，旧版 countdown<0 口径�
     const nodes = chain(['u1', 'a1 钥匙', 'u2', 'a2', 'u3', 'a3'])
     const dlg = dialogue(buildPrompt(c, undefined, nodes, 20))
     const contents = dlg.map((m) => m.content)
-    // 旧版口径：cd=2 从末尾数 a3,u3,a2 三条，减至 -1 停在 a2 → 插在 a2 之前
+    // 口径：cd=2 从末尾数 a3,u3,a2 三条，减至 -1 停在 a2 → 插在 a2 之前
     const idxA2 = contents.findIndex((x) => x.includes('a2'))
     const idxU2 = contents.findIndex((x) => x.includes('u2'))
     const idxWI = contents.findIndex((x) => x.includes('【深度插入】'))
@@ -106,14 +106,14 @@ describe('@深度世界书真实插入（回归 W3，旧版 countdown<0 口径�
     expect(dlg[idxWI].content.startsWith('[Entry]')).toBe(true)
   })
 
-  it('depth=0：插在最后一条对话楼层之前（旧版 countdown<0 口径），缺省角色为 user，无条目名时包 [Entry]', () => {
+  it('depth=0：插在最后一条对话楼层之前（countdown<0 口径），缺省角色为 user，无条目名时包 [Entry]', () => {
     const c = char({
       worldInfo: [{ keys: ['x'], content: '【尾插】', position: 'at_depth', depth: 0, scanDepth: 20 }],
     })
     const nodes = chain(['u1-x', 'a1', 'u2', 'a2'])
     const dlg = dialogue(buildPrompt(c, undefined, nodes, 20))
     // cd=0 在遇到末条 user/assistant（a2）时减至 -1 → 插在 a2 之前；
-    // 注入条目为 user 角色，被末尾统一后处理与前一条 user 楼合并（旧版 5707 同款）
+    // 注入条目为 user 角色，被末尾统一后处理与前一条 user 楼合并
     const last = dlg[dlg.length - 1]
     expect(last.role).toBe('assistant')
     expect(last.content).toBe('a2')
@@ -138,11 +138,11 @@ describe('发送层正则 depth 定向（回归 R2）', () => {
   })
 })
 
-describe('正则默认不污染发给模型的 prompt（对齐旧版 processRegex）', () => {
+describe('正则默认不污染发给模型的 prompt', () => {
   it('未勾「发送层」的正则只做显示美化，历史原文进 prompt', () => {
     const opts: PromptOptions = {
       regexEnabled: true,
-      // 内部形状缺省 applyOnSend=false；ST/旧版导入缺省也只显示
+      // 内部形状缺省 applyOnSend=false；ST 导入缺省也只显示
       regexScripts: [{ pattern: '密语', replace: '【已隐藏】' }],
     }
     const c = char()
@@ -164,7 +164,7 @@ describe('正则默认不污染发给模型的 prompt（对齐旧版 processRege
   })
 })
 
-describe('对齐旧版：指令先行 + 角色前奏（修复思考模型先分析世界书/正则再扮演）', () => {
+describe('指令先行 + 角色前奏（修复思考模型先分析世界书/正则再扮演）', () => {
   it('system 预设（破限）不再被丢弃，且占据第一条 system 的开头；其余系统预设包 [System Presets]', () => {
     const c = char()
     const nodes = chain(['你好', '你也好'])
@@ -179,9 +179,9 @@ describe('对齐旧版：指令先行 + 角色前奏（修复思考模型先分�
     expect(msgs[0].content.startsWith('你是续写器，直接扮演，不要分析材料')).toBe(true)
     expect(msgs[0].content).toContain('[System Presets]')
     expect(msgs[0].content).toContain('文风约束条款')
-    // 固定注入旧版 [Style Priority] 原文（不含任何自加的"勿分析"句）
+    // 固定注入的 [Style Priority]（不含任何自加的"勿分析"句）
     expect(msgs[0].content).toContain('[Style Priority]')
-    expect(msgs[0].content).toContain('最终回复的文风必须优先遵守上方系统预设中的规定文风。')
+    expect(msgs[0].content).toContain('正文文风一律以上方系统预设的文风规定为准。')
     expect(msgs[0].content).not.toContain('不要复述、分析或解释')
     // 顺序：破限 → [System Presets] → [Style Priority]
     const iJb = msgs[0].content.indexOf('你是续写器')
@@ -248,7 +248,7 @@ describe('对齐旧版：指令先行 + 角色前奏（修复思考模型先分�
   })
 })
 
-describe('第二轮严格对齐旧版', () => {
+describe('注入管线补充用例', () => {
   it('角色定义为 Name/Description/Personality/Scenario 标签格式', () => {
     const c = char({ personality: '冷静', scenario: '雨夜码头' })
     const pre = prelude(buildPrompt(c, undefined, chain(['u', 'a']), 20))
@@ -363,7 +363,7 @@ describe('第二轮严格对齐旧版', () => {
     // 角色前奏是 user（非 system）→ 被正则改写
     expect(prelude(msgs).content).toContain('前奏XXXX')
     expect(prelude(msgs).content).not.toContain('前奏密语')
-    // system 消息一律不经过正则（旧版 processRegex 首行 system return）
+    // system 消息一律不经过正则
     expect(msgs[0].content).toContain('系统密语')
     expect(msgs[0].content).not.toContain('系统XXXX')
   })
@@ -385,8 +385,8 @@ describe('第二轮严格对齐旧版', () => {
   })
 })
 
-describe('@深度多条目定位（回归 R1：逐字对齐旧版逐条注入口径）', () => {
-  it('depth=2 与 depth=4 并存：按 order 逐条处理，先前注入条目参与后续倒数（旧版行为）', () => {
+describe('@深度多条目定位（回归 R1：逐条注入口径）', () => {
+  it('depth=2 与 depth=4 并存：按 order 逐条处理，先前注入条目参与后续倒数', () => {
     const c = char({
       worldInfo: [
         { keys: ['x'], content: '【深4】', comment: 'D4', position: 'at_depth', depth: 4, scanDepth: 20 },
@@ -398,7 +398,7 @@ describe('@深度多条目定位（回归 R1：逐字对齐旧版逐条注入口
     const contents = dlg.map((m) => m.content)
     // 先注入 D2（cd=2 → 插在 a2 前）；随后 D4 在含 D2 的数组上重新倒数：
     // a3,u3,a2 消耗 3 层，D2 自身（user 角色）再消耗 1 层，停在 u2 → 插在 u2 前；
-    // 三条连续 user 消息（D4、u2、D2）被旧版 5707 式后处理链式合并为一条
+    // 三条连续 user 消息（D4、u2、D2）被末尾后处理链式合并为一条
     const iA1 = contents.findIndex((x) => x.includes('a1'))
     const iMerged = contents.findIndex((x) => x.includes('【深4】'))
     const iA2 = contents.findIndex((x) => x.includes('a2'))
@@ -439,7 +439,7 @@ describe('@深度多条目定位（回归 R1：逐字对齐旧版逐条注入口
   })
 })
 
-describe('user_top 执行顺序（回归 R2：与旧版 5669-5680 逐字一致）', () => {
+describe('user_top 执行顺序（回归 R2）', () => {
   it('user_top 在 @深度注入之后执行：尾部 @深度 user 注入条目会先被当作最后一条 user 消息', () => {
     const c = char({
       worldInfo: [
@@ -584,7 +584,7 @@ describe('整页面板托管（副模型接管 AI 自画面板）', () => {
   })
 })
 
-describe('向量记忆注入（旧版 role_memory_vector_recall 格式）', () => {
+describe('向量记忆注入（XML 分片格式）', () => {
   it('chunk 记忆按 memory_fragment XML 注入，summary 记忆维持原样式', () => {
     const c = char()
     const nodes = chain(['用户提问', '艾拉回应'])
@@ -603,7 +603,7 @@ describe('向量记忆注入（旧版 role_memory_vector_recall 格式）', () =
       ],
     }
     const sys = buildPrompt(c, undefined, nodes, 20, opts)[0].content
-    // 旧版 XML 块
+    // XML 块
     expect(sys).toContain('<role_memory_vector_recall>')
     expect(sys).toContain('以下内容是从往期对话记录中按当前输入检索出的相关记忆分片，并非全部历史。')
     expect(sys).toContain('<memory_fragment turn="3" similarity="83.4%">')

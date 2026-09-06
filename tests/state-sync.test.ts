@@ -28,7 +28,7 @@ const builtins = builtinStateSyncRules()
 
 describe('builtinStateSyncRules', () => {
   it('内置三种方言；setvar 宏默认关闭，其余启用', () => {
-    expect(builtins.map((r) => r.dialect)).toEqual(['legacy_json', 'json_block', 'macro_setvar'])
+    expect(builtins.map((r) => r.dialect)).toEqual(['updates_json', 'json_block', 'macro_setvar'])
     expect(builtins.find((r) => r.dialect === 'macro_setvar')?.disabled).toBe(true)
     expect(builtins.filter((r) => !r.disabled)).toHaveLength(2)
   })
@@ -151,7 +151,7 @@ describe('normalizeStateSyncRule', () => {
   it('宽松归一化：enabled:false 视为禁用；正则编译失败返回 null', () => {
     expect(normalizeStateSyncRule({ name: 'x', pattern: '[unclosed', dialect: 'json_block' })).toBeNull()
     expect(normalizeStateSyncRule({ name: 'x', enabled: false, pattern: 'a', dialect: 'json_block' })?.disabled).toBe(true)
-    expect(normalizeStateSyncRule({ regex: 'a', parser: 'legacy_json' })).toMatchObject({ pattern: 'a', dialect: 'legacy_json' })
+    expect(normalizeStateSyncRule({ regex: 'a', parser: 'updates_json' })).toMatchObject({ pattern: 'a', dialect: 'updates_json' })
     expect(normalizeStateSyncRules([{ name: 'ok', pattern: 'a' }, '垃圾', null])).toHaveLength(1)
   })
 })

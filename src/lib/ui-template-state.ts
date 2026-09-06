@@ -1,6 +1,6 @@
 /**
  * UI 模板动态状态：AI 回复时通过 <ui_template_updates> 更新模板变量，
- * 模板随剧情实时变化。对齐旧版 app.js 的 uiTemplate 更新管线（简化版）。
+ * 模板随剧情实时变化（副模型分析管线，简化版实现）。
  */
 import type { UiTemplate } from './uitemplate'
 
@@ -152,7 +152,7 @@ export function buildUiTemplateContextPrompt(
  *   - 'before'：要求模型把更新块放在回复「最开头、正文之前」。这样即使正文很长撞上
  *     max_tokens 被截断（线上实测主模型 completion 正好卡在 4096），更新块也已完整流出，
  *     面板仍能更新；流式期间该块由渲染层 stripStateSyncBlocks 实时隐藏，用户看不到 JSON。
- *   - 'after'：旧版原始语义，正文结束后追加（正文被截断时块会一起丢，仅在 max_tokens 充裕时可靠）。
+ *   - 'after'：正文结束后追加（正文被截断时块会一起丢，仅在 max_tokens 充裕时可靠）。
  */
 export function buildUiTemplateUpdateInstruction(
   templates: UiTemplate[],
@@ -191,7 +191,7 @@ export function buildUiTemplateUpdateInstruction(
 }
 
 /**
- * 副模型二次分析的消息组（旧版"副模型分析"语义，融合为单次调用）：
+ * 副模型二次分析的消息组（融合为单次调用）：
  * 主模型回复未携带变量更新块时，用副模型按最近楼层补一次变量分析。
  * 返回固定 JSON（{"updates":[…]}），解析复用 parseUpdatesPayload。
  */
@@ -215,7 +215,7 @@ export function buildAuxAnalysisMessages(
     ? existingNpcs.map((n) => `${n.npcName}（综合${n.score ?? '?'}·${n.stage ?? '未知阶段'}）`).join('、')
     : '（暂无档案）'
   const system = [
-    '你是旧版的UI状态更新器。根据用户消息里提供的最近对话，同时完成两件事：①更新UI模板中受剧情影响的变量；②给本场出场的NPC做好感度评判。',
+    '你是本应用的UI状态更新器。根据用户消息里提供的最近对话，同时完成两件事：①更新UI模板中受剧情影响的变量；②给本场出场的NPC做好感度评判。',
     '只返回一个JSON对象，不要解释，不要输出Markdown，不要展开思考过程。',
     '返回格式固定为 {"updates":[{"id":"模板id","variables":{"变量路径":"新值"},"reason":"简短原因"}],"affinity":[...NPC...]}。',
     '【updates 变量更新】variables 只包含「本次确实发生变化」的路径（通常十几到几十个）；值可以是文字、数字、对象或JSON数组。',
@@ -426,7 +426,7 @@ export function buildPanelRedrawMessages(
 ): { role: 'system' | 'user'; content: string }[] {
   if (!prevPanelHtml.trim() || !storyFloors.length) return []
   const system = [
-    '你是旧版的UI面板维护器。用户消息提供「上一版状态面板HTML」和「之后的剧情正文」，你的任务是把面板更新到剧情之后的最新状态。',
+    '你是本应用的UI面板维护器。用户消息提供「上一版状态面板HTML」和「之后的剧情正文」，你的任务是把面板更新到剧情之后的最新状态。',
     '【硬性要求】',
     '1. 只输出更新后的完整面板HTML（保持原 <!DOCTYPE html> 文档结构），不要任何解释、不要Markdown代码围栏、不要展开思考。',
     '2. 保持原有整体结构、页签组织、元素 id/class、<style> 样式与 <script> 脚本原样保留，只修改受剧情影响的数据与状态（数字、日期、新闻条目、标签选中态等）。',

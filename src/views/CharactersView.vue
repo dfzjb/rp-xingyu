@@ -12,7 +12,7 @@ import type { CharacterCard } from '../types'
 import { importCardFile, oursCardToSt, buildPngCard } from '../lib/cardio'
 import { normalizeUiTemplates } from '../lib/uitemplate'
 import { downloadJson, restoreAll } from '../db'
-import { importChatJsonlAuto } from '../lib/migrate'
+import { importChatJsonl } from '../lib/chatImport'
 
 const emit = defineEmits<{ (e: 'open-ai-workshop'): void }>()
 
@@ -32,8 +32,8 @@ const filtered = computed(() => {
 })
 
 // ── 导入：按扩展名/内容自动路由 ──
-// .jsonl → 聊天记录（旧版导出/酒馆导出，按角色名自动挂载）
-// .json  → 新站完整备份 / 旧版备份（含聊天）/ 角色卡 JSON
+// .jsonl → 酒馆导出的聊天记录（按角色名自动挂载）
+// .json  → 新站完整备份 / 角色卡 JSON
 // .png   → 角色卡
 async function onImportFiles(e: Event) {
   const files = (e.target as HTMLInputElement).files
@@ -45,10 +45,9 @@ async function onImportFiles(e: Event) {
     try {
       const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase()
       if (ext === '.jsonl') {
-        const report = await importChatJsonlAuto(await f.text(), f.name.replace(/\.jsonl$/i, ''))
+        const report = await importChatJsonl(await f.text(), f.name.replace(/\.jsonl$/i, ''))
         await Promise.all([characters.load(), chat.load()])
-        const total = report.chats + report.branches
-        notes.push(`${f.name}：导入 ${total} 个会话 / ${report.messages} 条消息${report.warnings.length ? '（⚠ ' + report.warnings.join('；') + '）' : ''}`)
+        notes.push(`${f.name}：导入 ${report.chats} 个会话 / ${report.messages} 条消息${report.warnings.length ? '（⚠ ' + report.warnings.join('；') + '）' : ''}`)
         continue
       }
       if (ext === '.json') {
@@ -61,16 +60,6 @@ async function onImportFiles(e: Event) {
           setTimeout(() => location.reload(), 900)
           return
         }
-        try {
-          // 旧版备份 / 平面键值表：映射写入（不覆盖已有数据）
-          const { parseLegacyBackupFile, migrateLegacyData } = await import('../lib/migrate')
-          const keys = parseLegacyBackupFile(obj)
-          const report = await migrateLegacyData(keys, f.name)
-          await Promise.all([characters.load(), chat.load()])
-          const total = report.characters + report.chats + report.branches + report.personas + report.kvKeys
-          notes.push(`${f.name}：导入完成，共 ${total} 条记录${report.warnings.length ? '（⚠ ' + report.warnings.join('；') + '）' : ''}`)
-          continue
-        } catch { /* 不是备份文件，按角色卡 JSON 处理 */ }
       }
       // 角色卡（PNG / SillyTavern JSON）
       const card = await importCardFile(f)

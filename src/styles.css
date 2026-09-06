@@ -1240,7 +1240,7 @@ html[data-theme='light'] .err-banner { background: rgba(255, 235, 235, 0.97); }
 
 /* UI 模板块 */
 .ui-tpl-block { margin: 8px 0; }
-/* 块内 iframe（新站生成 + 旧版迁移快照）统一铺满宽度、自适应高度由内部脚本撑开 */
+/* 块内 iframe 统一铺满宽度、自适应高度由内部脚本撑开 */
 .ui-tpl-block iframe,
 .html-card-container iframe {
   width: 100%;

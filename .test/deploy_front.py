@@ -15,7 +15,7 @@ import paramiko
 
 TOOLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools')
 sys.path.insert(0, os.path.abspath(TOOLS_DIR))
-from pull_all_data import HOST, USER, PWD  # noqa: E402  (凭据单一来源，不在本文件重复)
+from secrets_local import HOST, USER, PWD  # noqa: E402  (凭据单一来源，不在本文件重复)
 
 RP_SITE = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 DIST = os.path.join(RP_SITE, 'dist')

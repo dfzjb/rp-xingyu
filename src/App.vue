@@ -139,21 +139,6 @@ onMounted(async () => {
   const target = settings.settings.lastActiveCharUuid || characters.list[0]?.uuid
   if (target) await chat.openCharacter(target)
   window.addEventListener('beforeunload', () => { void chat.flushOnUnload() })
-
-  // 开发种子通道：仅本地回环地址 + 显式 #devseed 时，从同源 Mock 服务灌入夹具数据
-  if (location.hash === '#devseed' && ['localhost', '127.0.0.1'].includes(location.hostname)) {
-    try {
-      const resp = await fetch('/api/dev/fixture-keys')
-      const j = await resp.json()
-      const mod = await import('./lib/migrate')
-      await mod.migrateLegacyData(mod.parseLegacyBackupFile(j.keys ?? j), 'devseed')
-      console.info('[devseed] done')
-    } catch (e) {
-      console.warn('[devseed] failed', e)
-    }
-    history.replaceState(null, '', location.pathname)
-    location.reload()
-  }
 })
 </script>
 

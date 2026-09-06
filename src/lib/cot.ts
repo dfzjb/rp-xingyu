@@ -1,5 +1,5 @@
 /**
- * 思维链解析：兼容旧版消息格式。
+ * 思维链解析：兼容 <think> 等内嵌标签格式。
  * - CoT 以 <think>…</think> 或 <cot>…</cot> 标签嵌在正文里（支持未闭合、闭合格式不规范）
  * - 部分消息另有独立 reasoning 字段
  * - 正文尾部 [系统指令: …] 段视为系统注记，单独展示
@@ -39,7 +39,7 @@ export function parseCot(text: string): ParsedContent {
   return { cot: cotContent.trim(), main: main.trim(), sys: sys.trim(), cotFinished: isFinished }
 }
 
-/** 统计正文口径的字数（思维链/系统指令不计入，与旧版 getConversationBodyLength 对齐） */
+/** 统计正文口径的字数（思维链/系统指令不计入） */
 export function bodyLength(text: string): number {
   return parseCot(text || '').main.length
 }

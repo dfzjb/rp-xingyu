@@ -34,7 +34,7 @@ export const useCharactersStore = defineStore('characters', () => {
     sortList(list.value)
   }
 
-  /** 收藏置顶开关（旧版 ☆）：收藏的卡排到列表最前 */
+  /** 收藏置顶开关：收藏的卡排到列表最前 */
   async function toggleFav(uuidStr: string) {
     const c = list.value.find((x) => x.uuid === uuidStr)
     if (!c) return
@@ -45,7 +45,7 @@ export const useCharactersStore = defineStore('characters', () => {
   async function remove(uuidStr: string) {
     await db.characters.delete(uuidStr)
     list.value = list.value.filter((c) => c.uuid !== uuidStr)
-    // 级联删除该角色的会话（与旧版"删卡级联删聊天"一致）
+    // 级联删除该角色的会话
     const sessions = await db.chats.where('charUuid').equals(uuidStr).toArray()
     await db.chats.bulkDelete(sessions.map((s) => s.id))
     // 同步清掉 chat store 内存里的会话，否则侧栏计数/当前会话残留到刷新才消失

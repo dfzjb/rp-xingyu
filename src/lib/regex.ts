@@ -1,5 +1,5 @@
 /**
- * 正则脚本引擎：内部统一模型 + 旧版/SillyTavern 格式互转。
+ * 正则脚本引擎：内部统一模型 + SillyTavern 格式互转。
  *
  * 内部模型（显式影响面，避免不同来源 placement 数字语义混淆）：
  *   { name, pattern, replace, flags, affectsUser, affectsAI, applyOnDisplay, applyOnSend, disabled }
@@ -8,7 +8,6 @@
  *
  * 兼容导入：
  *   - SillyTavern 扩展格式 {scriptName, findRegex(/p/f 或纯串), replaceString, placement[], markdownOnly, promptOnly, disabled, minDepth?, maxDepth?}
- *   - 旧版 旧版格式 {name?, find|regex, replacement|replaceText, flags, placement:[1用户输入,2AI输出]}
  */
 export interface RegexScript {
   id?: string
@@ -48,7 +47,7 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, any>
   // 内部模型（正则编辑器保存的形状）原样归一化：applyRegexScripts 会对库里每条脚本
-  // 调用本函数，若不识别 pattern 字段，编辑器创建的脚本会被当旧版格式丢掉 pattern 而静默失效
+  // 调用本函数，若不识别 pattern 字段，编辑器创建的脚本会被当外部格式丢掉 pattern 而静默失效
   if (typeof o.pattern === 'string') {
     return {
       id: typeof o.id === 'string' ? o.id : undefined,
@@ -59,7 +58,7 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
       affectsUser: o.affectsUser !== false,
       affectsAI: o.affectsAI !== false,
       applyOnDisplay: o.applyOnDisplay !== false,
-      // 对齐旧版/ST：正则默认只做显示层美化，不进发给模型的 prompt；需显式开启才在发送层执行
+      // 默认只做显示层美化（与 ST 一致），不进发给模型的 prompt；需显式开启才在发送层执行
       applyOnSend: o.applyOnSend === true,
       disabled: o.disabled === true,
       minDepth: typeof o.minDepth === 'number' ? o.minDepth : null,
@@ -83,7 +82,7 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
       affectsUser = pl.includes(1)
       affectsAI = pl.includes(2)
     }
-    // 对齐旧版 processRegex / SillyTavern 语义：
+    // SillyTavern 语义：
     //   两个开关都不勾 = 仅显示层美化（不进发给模型的 prompt）；
     //   markdownOnly=仅显示；promptOnly=仅发送层（进 prompt，不显示）；两者同勾按仅显示处理。
     let mdOnly = o.markdownOnly === true
@@ -106,31 +105,8 @@ export function normalizeRegexScript(raw: unknown): RegexScript | null {
     return s
   }
 
-  // 旧版 旧版格式
-  pattern = typeof o.regex === 'string' && o.regex ? o.regex : String(o.find ?? '')
-  replace = typeof o.replacement === 'string' ? o.replacement : String(o.replaceText ?? '')
-  const pl = asArray(o.placement)
-  if (pl.length) {
-    affectsUser = pl.includes(1)
-    affectsAI = pl.includes(2)
-  }
-  // 旧版 processRegex：markdownOnly/promptOnly 缺省都为 false，正则默认只在显示层执行、
-  // 不进发给模型的 prompt；仅当脚本显式 promptOnly 时才在发送层执行
-  let legacyMd = o.markdownOnly === true
-  let legacyPrompt = o.promptOnly === true
-  if (legacyMd && legacyPrompt) legacyPrompt = false
-  return {
-    id: typeof o.id === 'string' ? o.id : undefined,
-    name: String(o.name || '未命名'),
-    pattern,
-    replace,
-    flags,
-    affectsUser,
-    affectsAI,
-    applyOnDisplay: !legacyPrompt,
-    applyOnSend: legacyPrompt,
-    disabled: o.disabled === true,
-  }
+  // 未知形状：无法识别则丢弃
+  return null
 }
 
 /** 内部模型 → 酒馆扩展导出格式 */
@@ -171,7 +147,7 @@ export function extractInlineFlags(pattern: string, baseFlags = ''): { pattern: 
 }
 
 /**
- * 受保护段（对齐旧版 processRegex 保护逻辑）：整页 HTML、script/style、
+ * 受保护段：整页 HTML、script/style、
  * cot/think 思维链块、Markdown 代码块、行内代码、HTML 标签——普通正则不进入这些段，
  * 防止把卡内 HTML UI / 代码示例改坏。捕获组用于 split 后逐段识别。
  */
@@ -226,7 +202,7 @@ function compile(s: RegexScript): RegExp | null {
 /**
  * 对文本应用一批正则脚本。
  * @param layer 显示层(display)或发送层(send)；与脚本的 applyOn 开关和 affects 影响面共同决定是否生效
- * @param options.depth 该文本距最新消息的层数（0=最新），用于执行脚本的 minDepth/maxDepth 深度定向（对齐旧版）
+ * @param options.depth 该文本距最新消息的层数（0=最新），用于执行脚本的 minDepth/maxDepth 深度定向
  */
 export function applyRegexScripts(
   text: string,

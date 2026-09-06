@@ -1,5 +1,5 @@
 /**
- * 记忆系统：对齐旧版经典记忆模型。
+ * 记忆系统：经典记忆 + 向量分片两种模式。
  * 存储：按会话 id 分组；条目 {summary, turn, sourceAssistantIds, classicMemory:true}
  * 注入：绑定的 AI 消息之后插入上下文消息（见 prompt.ts）。
  */
@@ -47,7 +47,7 @@ export async function removeMemory(id: string) {
 
 const DISTILL_SYSTEM = '你是剧情记录员。把给定的 RP 聊天记录提炼成简洁的长期记忆要点，供后续剧情保持连贯。要求：只输出要点列表，每行一条、以 - 开头；保留关键事实（人物关系、承诺、地点、物品、身份揭示、重大转折），不要复述对白，总长不超过 {LIMIT} 字。'
 
-/** 三档详略（对齐旧版）：精简 50-80 字 / 均衡 100-130 字 / 详细 200-250 字 */
+/** 三档详略：精简 50-80 字 / 均衡 100-130 字 / 详细 200-250 字 */
 export const SUMMARY_STYLES = {
   brief: { label: '精简', limit: 80, hint: '精简总结，50 到 80 字' },
   balanced: { label: '均衡', limit: 130, hint: '均衡总结，100 到 130 字' },
@@ -121,7 +121,7 @@ export interface BackfillOptions {
 }
 
 /**
- * 补录记忆（对齐旧版"补录"语义）：
+ * 补录记忆（手动补录语义）：
  * 把「保留最近楼层」之外的历史按每块 10 楼分段，以指定并发数提炼入库。
  * 已有 AI 记忆绑定锚点之前的楼层自动跳过，避免重复补录。
  * @returns 新增记忆条数
@@ -237,7 +237,7 @@ export async function searchVectorMemories(
   return scored.slice(0, topK).map((x) => ({ ...x.m, vectorScore: x.score }))
 }
 
-// ── 向量模式：对话原文分片自动入库（对齐旧版 _doEmbedMemoryForMessages，不依赖聊天副模型）──
+// ── 向量模式：对话原文分片自动入库（不依赖聊天副模型）──
 
 /** 入库前清洗：去思维链 / UI 更新块 / 代码块 / 行内代码 / HTML 标签 / 冗余空白 */
 export function cleanTextForVector(raw: string): string {
@@ -253,7 +253,7 @@ export function cleanTextForVector(raw: string): string {
 const CHUNK_TARGET = 350 // 单片目标字符数（短段合并到此附近）
 const CHUNK_MAX = 800 // 单片硬上限（超出按句切）
 
-/** 段落分片：短段合并、长段按句拆（对齐旧版 split/merge 语义） */
+/** 段落分片：短段合并、长段按句拆 */
 export function chunkText(raw: string): string[] {
   const paras = raw.split(/\n+/).map((p) => p.trim()).filter((p) => p.length > 1)
   const out: string[] = []
@@ -278,13 +278,13 @@ export function chunkText(raw: string): string[] {
   return out
 }
 
-// ── 旧版同构分片构造（buildVectorMemoryFragments / stripVectorMemoryCode 逐字对齐）──
+// ── 分片构造 ──
 
-const VECTOR_MAX_PARAGRAPH = 1800 // 旧版 MEMORY_VECTOR_MAX_PARAGRAPH_LENGTH
-const VECTOR_MERGE_MAX = 400 // 旧版 MEMORY_VECTOR_MERGE_MAX_LENGTH
-const VECTOR_BATCH_SIZE = 16 // 旧版 MEMORY_VECTOR_BATCH_SIZE
+const VECTOR_MAX_PARAGRAPH = 1800 // 单个分片最大字符数
+const VECTOR_MERGE_MAX = 400 // 小段合并目标上限
+const VECTOR_BATCH_SIZE = 16 // embedding 批大小
 
-/** 保存记忆前的文本清洗（旧版 stripVectorMemoryCode 同构）：剥思维链/UI 更新块/代码块/HTML，逐行剔除代码样式行 */
+/** 保存记忆前的文本清洗：剥思维链/UI 更新块/代码块/HTML，逐行剔除代码样式行 */
 export function stripMemoryCode(raw: string): string {
   let result = parseCot(raw || '').main
     .replace(/<ui_template_updates>[\s\S]*?<\/ui_template_updates>/gi, '')
@@ -331,7 +331,7 @@ export function stripMemoryCode(raw: string): string {
   return result
 }
 
-/** 长段按句切（旧版 splitLongMemoryParagraph：超长时优先在句读处断开，且断点不早于 55% 处） */
+/** 长段按句切：超长时优先在句读处断开，且断点不早于 55% 处 */
 export function splitLongMemoryParagraph(paragraph: string, maxLength = VECTOR_MAX_PARAGRAPH): string[] {
   const text = String(paragraph || '').trim()
   if (!text) return []
@@ -357,7 +357,7 @@ export function splitLongMemoryParagraph(paragraph: string, maxLength = VECTOR_M
   return parts.filter(Boolean)
 }
 
-/** 空行分段 → 每段超长再切（旧版 splitMemoryParagraphs） */
+/** 空行分段 → 每段超长再切 */
 export function splitMemoryParagraphs(text: string): string[] {
   const clean = String(text || '')
     .replace(/\r\n/g, '\n')
@@ -371,7 +371,7 @@ export function splitMemoryParagraphs(text: string): string[] {
   return rawParagraphs.flatMap((p) => splitLongMemoryParagraph(p))
 }
 
-/** 小段合并到 maxLength 以内（旧版 mergeSmallMemoryParagraphs，保留段落序号区间） */
+/** 小段合并到 maxLength 以内（保留段落序号区间） */
 export function mergeSmallMemoryParagraphs(
   paragraphs: string[],
   maxLength = VECTOR_MERGE_MAX,
@@ -404,7 +404,7 @@ export function mergeSmallMemoryParagraphs(
   return merged
 }
 
-/** 内容指纹（旧版 getVectorMemoryContentFingerprint）：去空白/标点后 ≥80 字取前 1000 */
+/** 内容指纹：去空白/标点后 ≥80 字取前 1000 */
 export function memoryContentFingerprint(text: string): string {
   const normalized = String(text || '')
     .replace(/\s+/g, '')
@@ -418,7 +418,7 @@ function trimMemoryText(text: string, maxLength = 900): string {
   return `${clean.slice(0, maxLength)}...`
 }
 
-/** 一条旧版式记忆分片 */
+/** 一条记忆分片 */
 export interface VectorFragment {
   turn: number
   sequence: number
@@ -430,7 +430,7 @@ export interface VectorFragment {
 }
 
 /**
- * 一轮对话 → 旧版式记忆分片（buildVectorMemoryFragments 同构）：
+ * 一轮对话 → 记忆分片：
  * assistant 段加"角色卡："前缀；存在 AI 段时把"用户：…"整行前置到每条片段；
  * 无 AI 段（纯用户输入轮）则用户段独立成片并自带"用户："前缀。
  */
@@ -500,7 +500,7 @@ export async function distillTurnMemory(
   for (const m of await listMemories(sessionId)) {
     for (const id of [...(m.sourceTurnIds || []), ...(m.sourceAssistantIds || [])]) if (id) covered.add(id)
   }
-  // 轮级去重：轮内任一节点已被既有记忆覆盖即整轮跳过（旧版 autoExtract 以轮为单位，续写/重 roll 不重复入库）
+  // 轮级去重：轮内任一节点已被既有记忆覆盖即整轮跳过（以轮为单位，续写/重 roll 不重复入库）
   if (turnNodes.some((n) => covered.has(n.id))) return 0
   const usable = turnNodes.filter((n) => n.role === 'user' || n.role === 'assistant')
   if (!usable.length) return 0
@@ -534,9 +534,9 @@ export async function distillTurnMemory(
 }
 
 /**
- * 向量模式自动入库（旧版 _doEmbedMemoryForMessages 对齐）：
+ * 向量模式自动入库：
  * 链路按轮分组（user 节点起新轮，开场白等无前置用户输入的 AI 楼不参与）→
- * 未覆盖的轮按旧版规则分片 → 内容指纹去重（存量 + 批内）→ 按 16/批 embedding 入库。
+ * 未覆盖的轮分片 → 内容指纹去重（存量 + 批内）→ 按 16/批 embedding 入库。
  * 幂等：已被记忆覆盖的节点自动跳过，可每轮重复调用。
  * @returns 新增条目数
  */
@@ -556,7 +556,7 @@ export async function autoIngestVectorFloors(
     if (fp) existingFingerprints.add(fp)
   }
 
-  // 按轮分组：user 节点起新轮（开场白等无前置用户输入的 AI 楼跳过，对齐旧版"完整轮"语义）
+  // 按轮分组：user 节点起新轮（开场白等无前置用户输入的 AI 楼跳过，只处理完整轮）
   const turns: { turn: number; nodes: MsgNode[] }[] = []
   let turnNo = 0
   for (const n of chainNodes) {
@@ -577,7 +577,7 @@ export async function autoIngestVectorFloors(
     fragments.push(...buildTurnVectorFragments(nodes, t.turn))
   }
 
-  // 内容指纹去重（旧版 getVectorFragmentFingerprint 语义：存量 + 本批 pending）
+  // 内容指纹去重（存量 + 本批 pending）
   const pending = new Set(existingFingerprints)
   const deduped = fragments.filter((f) => {
     const fp = memoryContentFingerprint(f.paragraph || f.sourceText)

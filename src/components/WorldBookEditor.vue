@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 世界书条目可视化编辑器（v-model:list）。
- * 条目形状与旧版/SillyTavern 兼容：{comment, keys, constant, enabled, order, content}
+ * 条目形状与 SillyTavern 兼容：{comment, keys, constant, enabled, order, content}
  */
 import { computed } from 'vue'
 import { Plus, Trash2, ArrowUp, ArrowDown } from 'lucide-vue-next'
@@ -85,7 +85,7 @@ function logicOf(e: WEntry): string {
 }
 function positionOf(e: WEntry): string {
   const p = e.position
-  // 对齐旧版七位置（编辑器内以 '@D' 表示 at_depth）
+  // 七位置（编辑器内以 '@D' 表示 at_depth）
   const named = ['system_top', 'global_note', 'before_char', 'after_char', 'user_top', 'assistant_top', '@D']
   if (typeof p === 'string') {
     if (named.includes(p)) return p

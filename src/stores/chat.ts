@@ -50,7 +50,7 @@ export const useChatStore = defineStore('chat', () => {
     if (uiTplStatusTimer) clearTimeout(uiTplStatusTimer)
     uiTplStatusTimer = setTimeout(() => { uiTplStatus.value = null }, 12000)
   }
-  /** 一次性临时规范指令（随下次发送附带，旧版语义） */
+  /** 一次性临时规范指令（随下次发送附带） */
   const pendingInstruction = ref('')
   /** 每会话上次自动提炼时的楼层数 */
   const lastPatrolFloor = new Map<string, number>()
@@ -90,7 +90,7 @@ export const useChatStore = defineStore('chat', () => {
     return path
   })
 
-  /** 链路正文总字数（剥思维链标签与空白，与旧版口径对齐） */
+  /** 链路正文总字数（剥思维链标签与空白） */
   const totalBodyChars = computed(() => {
     let n = 0
     for (const m of chain.value) {
@@ -310,7 +310,7 @@ export const useChatStore = defineStore('chat', () => {
   const panelRedrawRunning = new Set<string>()
 
   /**
-   * 副模型兜底分析（旧版"副模型分析"语义）：主模型回复未携带变量更新块时，
+   * 副模型兜底分析：主模型回复未携带变量更新块时，
    * 后台按最近楼层让副模型补一次变量分析并回写。静默失败，不阻塞对话。
    * 副模型取 uiTemplateAuxModel → memoryAuxModel（仅用显式配置的模型，不默认占用主模型）。
    */
@@ -818,9 +818,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 每轮记忆入库（两种模式都每轮，对齐旧版 autoExtract 的"每轮提取"语义）：
+   * 每轮记忆入库（两种模式都每轮）：
    * - 总结模式：调记忆副模型把本轮（最后一个 user 起到链尾）提炼为记忆条目；
-   * - 向量模式：把本轮按旧版规则分片 embedding 入库（autoIngestVectorFloors 幂等，直接每轮跑）。
+   * - 向量模式：把本轮分片 embedding 入库（autoIngestVectorFloors 幂等，直接每轮跑）。
    * 受 记忆引擎/自动巡逻 总开关门控；模型未配置时静默跳过。20 楼巡逻仍负责老楼层沉淀。
    */
   async function maybeAutoMemoryTurn(s: ChatSession) {

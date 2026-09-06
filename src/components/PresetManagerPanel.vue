@@ -1,19 +1,16 @@
 <script setup lang="ts">
-/** 提示词预设条目管理器（旧版 presets 模型：有序、可启停、带角色；含内置预设组） */
+/** 提示词预设条目管理器：有序、可启停、带角色 */
 import { computed } from 'vue'
 import { SlidersHorizontal } from 'lucide-vue-next'
 import { NSwitch } from 'naive-ui'
-import { applyPromptEntryPatch } from '../lib/builtinPresets'
+import { applyPromptEntryPatch } from '../lib/promptEntries'
 import { uuid } from '../lib/id'
-import { toast } from '../lib/toast'
 import { useSettingsStore } from '../stores/settings'
 import type { PromptPreset } from '../types'
 
 const settings = useSettingsStore()
 
-type Entry = PromptPreset & { builtinKey?: string; builtin?: boolean }
-
-const entries = computed<Entry[]>(() => (settings.settings.promptEntries || []) as Entry[])
+const entries = computed<PromptPreset[]>(() => settings.settings.promptEntries || [])
 
 async function addPromptEntry() {
   const list = [...(settings.settings.promptEntries || [])]
@@ -21,11 +18,6 @@ async function addPromptEntry() {
   await settings.patch({ promptEntries: list })
 }
 async function removePromptEntry(id: string) {
-  const target = ((settings.settings.promptEntries || []) as Entry[]).find((p) => p.id === id)
-  if (target?.builtin) {
-    toast.warning('内置预设不可删除，如不需要可关闭开关')
-    return
-  }
   await settings.patch({ promptEntries: (settings.settings.promptEntries || []).filter((p) => p.id !== id) })
 }
 async function updatePromptEntry(i: number, patch: Partial<PromptPreset>) {
@@ -38,24 +30,19 @@ async function movePromptEntry(i: number, dir: -1 | 1) {
   ;[list[i], list[j]] = [list[j], list[i]]
   await settings.patch({ promptEntries: list })
 }
-function entryLabel(p: Entry): string {
+function entryLabel(p: PromptPreset): string {
   return p.name || '未命名'
-}
-async function onResetBuiltin() {
-  if (!confirm('重置内置预设为出厂状态？\n\n将恢复内置条目原文与默认启停（默认全开，仅第三人称因人称互斥默认停用），自建条目不受影响。')) return
-  await settings.resetBuiltinPromptEntries()
 }
 </script>
 
 <template>
   <div>
     <p style="font-size: 0.78rem; color: var(--text-2); line-height: 1.7; margin-bottom: 12px">
-      每条是一个可独立启停的提示词条目。system 条目拼进系统提示末尾；user / assistant 条目作为消息追加在对话历史之后。内置预设默认全部启用（仅第三人称因与第二人称互斥默认停用），强制存在、不可删除，排序优先于自建条目与角色卡内容；对内置条目的启停与内容修改会被保留。
+      每条是一个可独立启停的提示词条目。system 条目拼进系统提示末尾；user / assistant 条目作为消息追加在对话历史之后。名为「第二人称」「第三人称」的条目互斥：启用其一时另一条自动关闭。
     </p>
 
     <div v-for="(p, i) in entries" :key="p.id" class="preset-entry" :style="p.enabled ? '' : 'opacity:0.55'">
       <div class="entry-head">
-        <span v-if="p.builtin" class="chip violet">内置</span>
         <input
           class="input"
           style="flex: 1; padding: 6px 10px; font-size: 0.82rem"
@@ -71,7 +58,7 @@ async function onResetBuiltin() {
         <n-switch size="small" :value="p.enabled" @update:value="(v: boolean) => updatePromptEntry(i, { enabled: v })" />
         <button class="btn sm ghost" title="上移" @click="movePromptEntry(i, -1)">▲</button>
         <button class="btn sm ghost" title="下移" @click="movePromptEntry(i, 1)">▼</button>
-        <button class="btn sm ghost danger" :title="p.builtin ? '内置预设不可删除' : '删除'" :disabled="!!p.builtin" @click="removePromptEntry(p.id)">✕</button>
+        <button class="btn sm ghost danger" title="删除" @click="removePromptEntry(p.id)">✕</button>
       </div>
       <textarea
         class="textarea"
@@ -85,10 +72,9 @@ async function onResetBuiltin() {
 
     <div style="margin-top: 10px; display: flex; gap: 8px">
       <button class="btn sm primary" @click="addPromptEntry">＋ 新增条目</button>
-      <button class="btn sm ghost" title="内置条目恢复出厂原文与默认启停，自建条目保留" @click="onResetBuiltin">重置内置预设</button>
     </div>
     <p v-if="!(settings.settings.promptEntries || []).length" style="font-size: 0.78rem; color: var(--text-2); margin-top: 6px">
-      暂无条目。内置组会在重启后自动补回。
+      暂无条目，点击「新增条目」创建。
     </p>
   </div>
 </template>

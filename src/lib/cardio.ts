@@ -3,7 +3,7 @@
  * PNG 解析为纯前端实现（思路与社区通用格式一致；实现独立，无上游代码）。
  * ST 格式规范参考：https://github.com/malfoyslastname/character_card_v2
  */
-import type { CharacterCard, LegacyCharacter } from '../types'
+import type { CharacterCard } from '../types'
 import { uuid } from './id'
 import { normalizeUiTemplates } from './uitemplate'
 import { normalizeWorldInfoList } from './worldinfo'
@@ -149,7 +149,7 @@ const CHUNK_SIZE = 0x8000
 
 // ── ST 卡对象 ↔ 新站卡互转 ──
 
-/** ST 卡（V1/V2/V3 或 旧版 老格式）→ 新站卡 */
+/** ST 卡（V1/V2/V3）→ 新站卡 */
 export function stCardToOurs(obj: unknown, avatarDataUri: string): CharacterCard {
   if (!obj || typeof obj !== 'object') throw new Error('卡数据无效')
   const o = obj as Record<string, any>
@@ -181,17 +181,17 @@ export function stCardToOurs(obj: unknown, avatarDataUri: string): CharacterCard
     tags: Array.isArray(data.tags) ? data.tags : [],
     worldInfo,
     regexScripts: Array.isArray(ext.regex_scripts) ? ext.regex_scripts : (Array.isArray(data.regexScripts) ? data.regexScripts : []),
-    // 旧版导入同款回退链：extensions 优先，其次 data / 根层的驼峰与下划线两种键名
+    // extensions 优先（含本站自有键），其次 data / 根层的驼峰与下划线两种键名
     uiTemplates: normalizeUiTemplates(
-      ext.legacy_ui_templates
+      ext.rp_site_ui_templates
       ?? ext.ui_templates
       ?? data.uiTemplates
       ?? data.ui_templates
       ?? o.uiTemplates
       ?? o.ui_templates,
     ),
-    stateSyncRules: Array.isArray(ext.legacy_state_sync_rules)
-      ? ext.legacy_state_sync_rules
+    stateSyncRules: Array.isArray(ext.rp_site_state_sync_rules)
+      ? ext.rp_site_state_sync_rules
       : Array.isArray(data.stateSyncRules)
         ? data.stateSyncRules
         : Array.isArray(o.stateSyncRules)
@@ -236,10 +236,10 @@ export function oursCardToSt(card: CharacterCard): Record<string, unknown> {
       avatar: 'none',
       character_book: entries.length ? { entries } : undefined,
       extensions: {
-        legacy_watermark: 'rp-site',
+        rp_site_watermark: 'rp-site',
         regex_scripts: card.regexScripts || [],
-        legacy_ui_templates: card.uiTemplates || [],
-        legacy_state_sync_rules: card.stateSyncRules || [],
+        rp_site_ui_templates: card.uiTemplates || [],
+        rp_site_state_sync_rules: card.stateSyncRules || [],
       },
     },
   }

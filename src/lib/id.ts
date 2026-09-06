@@ -1,4 +1,4 @@
-/** 生成 uuid v4（旧版同款格式，保证迁移数据 id 风格一致） */
+/** 生成 uuid v4 */
 export function uuid(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {

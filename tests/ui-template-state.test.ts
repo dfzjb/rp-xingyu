@@ -114,7 +114,7 @@ describe('提示词构建', () => {
     expect(buildUiTemplateUpdateInstruction([t])).toContain('"hp": 1')
   })
 
-  it('默认 position=before：要求先输出更新块再写正文（免疫正文 max_tokens 截断）；after 可切回旧版后置语义', () => {
+  it('默认 position=before：要求先输出更新块再写正文（免疫正文 max_tokens 截断）；after 可切回后置语义', () => {
     const t = tpl('t1', '面板', { hp: 1 })
     const before = buildUiTemplateUpdateInstruction([t], {})
     expect(before).toContain('最开头')

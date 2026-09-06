@@ -50,7 +50,7 @@ describe('resolveWorldInfo 基础激活', () => {
     expect(contents(hit.afterChar)).toEqual(['龙设定'])
   })
 
-  it('缺省扫描深度固定为 2，不被其他条目的大 scanDepth 联动放大（对齐旧版全局 2）', () => {
+  it('缺省扫描深度固定为 2，不被其他条目的大 scanDepth 联动放大', () => {
     // 一条大深度条目（20 楼）不应让未设深度的条目也按 20 楼扫描
     const wide: WorldInfoEntry = { keys: ['远古'], content: '大深度条目', scanDepth: 20, position: 'after_char' }
     const normal: WorldInfoEntry = { keys: ['古龙'], content: '默认深度条目', position: 'after_char' }
@@ -73,7 +73,7 @@ describe('resolveWorldInfo 基础激活', () => {
     expect(contents(r.afterChar)).toEqual(['日期设定'])
   })
 
-  it('激活条目携带 comment（供旧版式 [条目名] 包裹）', () => {
+  it('激活条目携带 comment（供 [条目名] 包裹）', () => {
     const r = resolveWorldInfo(
       [{ keys: ['魔法'], content: '正文', comment: '魔法体系', position: 'before_char' }],
       msgs('练习魔法'),
@@ -134,7 +134,7 @@ describe('注入位置', () => {
     expect(r.byDepth[1].role).toBe('system')
   })
 
-  it('@深度条目缺省 depthRole 对齐旧版为 user（不再默认 system）', () => {
+  it('@深度条目缺省 depthRole 为 user（不再默认 system）', () => {
     const r = resolveWorldInfo(
       [{ keys: ['魔法'], content: '默认角色', position: '@depth', depth: 1 }],
       msgs('魔法'),
@@ -159,7 +159,7 @@ describe('注入位置', () => {
     expect(contents(r.afterChar)).toEqual(['第一', '第二'])
   })
 
-  it('七位置各自进入对应分组（对齐旧版 wiGroups）', () => {
+  it('七位置各自进入对应分组', () => {
     const mk = (position: string, content: string): WorldInfoEntry =>
       ({ constant: true, content, position })
     const r = resolveWorldInfo(
@@ -182,7 +182,7 @@ describe('注入位置', () => {
     expect(r.byDepth).toEqual([])
   })
 
-  it('scanDepth=0：非常驻条目不扫描不激活，常驻条目仍激活（对齐旧版）', () => {
+  it('scanDepth=0：非常驻条目不扫描不激活，常驻条目仍激活', () => {
     const kw = { keys: ['魔法'], content: '关键词条目', scanDepth: 0, position: 'after_char' }
     expect(resolveWorldInfo([kw], msgs('魔法')).afterChar).toEqual([])
     const constant = { constant: true, content: '常驻条目', scanDepth: 0, position: 'after_char' }
@@ -201,7 +201,7 @@ describe('递归激活', () => {
     ])
   })
 
-  it('默认不做递归链式扩散（对齐旧版：只扫一轮对话楼层）', () => {
+  it('默认不做递归链式扩散（只扫一轮对话楼层）', () => {
     const a = { keys: ['起点'], content: '提到钥匙', position: 'after_char' as const }
     const b = { keys: ['钥匙'], content: '提到门', position: 'after_char' as const }
     const c = { keys: ['门'], content: '门后秘密', position: 'after_char' as const }
@@ -223,13 +223,13 @@ describe('normalizeWorldInfoEntry 字段防腐层', () => {
     expect(before.position).toBe('before_char')
   })
 
-  it('数字位置编码对齐旧版：0 before / 1 after / 2,3 global_note / 4 at_depth', () => {
+  it('数字位置编码：0 before / 1 after / 2,3 global_note / 4 at_depth', () => {
     expect(normalizeWorldInfoEntry({ position: 0, content: 'a', keys: ['x'] })!.position).toBe('before_char')
     expect(normalizeWorldInfoEntry({ position: 1, content: 'a', keys: ['x'] })!.position).toBe('after_char')
     expect(normalizeWorldInfoEntry({ position: 2, content: 'a', keys: ['x'] })!.position).toBe('global_note')
     expect(normalizeWorldInfoEntry({ position: 3, content: 'a', keys: ['x'] })!.position).toBe('global_note')
     expect(normalizeWorldInfoEntry({ position: 4, content: 'a', keys: ['x'] })!.position).toBe('at_depth')
-    // 无法识别的数字/字符串默认 at_depth（旧版默认）
+    // 无法识别的数字/字符串默认 at_depth
     expect(normalizeWorldInfoEntry({ position: 9, content: 'a', keys: ['x'] })!.position).toBe('at_depth')
   })
 
@@ -253,7 +253,7 @@ describe('normalizeWorldInfoEntry 字段防腐层', () => {
     expect(e.selectiveLogic).toBe('AND_ALL')
   })
 
-  it('缺省 depthRole 对齐旧版为 user；数字 0 显式 system', () => {
+  it('缺省 depthRole 为 user；数字 0 显式 system', () => {
     expect(normalizeWorldInfoEntry({ keys: ['x'], content: 'C', position: 4 })!.depthRole).toBe('user')
     expect(normalizeWorldInfoEntry({ keys: ['x'], content: 'C', position: 4, depthRole: 0 })!.depthRole).toBe('system')
   })

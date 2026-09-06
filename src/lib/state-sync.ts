@@ -1,21 +1,21 @@
 /**
  * 变量回写规则引擎：正则驱动的"更新指令 → 解析"泛化层。
  *
- * 内置的 <ui_template_updates> 通道（ui-template-state.ts）只认 旧版 自有方言；
+ * 内置的 <ui_template_updates> 通道（ui-template-state.ts）使用 updates_json 方言；
  * 其他生态角色卡（酒馆 Variables 框架的 <UpdateVariable>、{{setvar}} 宏、任意自定义
  * 标签块）的更新指令会被当正文丢弃。本模块把"从 AI 回复中提取变量更新"抽象成
  * 可配置的正则规则，随角色卡携带（char.stateSyncRules），任何卡都能接上回写闭环。
  *
  * 规则模型：
  *   { name, pattern(正则源码，捕获组1=载荷), flags, dialect, template?, disabled? }
- *   - legacy_json   载荷为 {"updates":[{id?,name?,variables:{路径:值}}]}（兼容裸 variables / 数组）
+ *   - updates_json  载荷为 {"updates":[{id?,name?,variables:{路径:值}}]}（兼容裸 variables / 数组）
  *   - json_block    载荷为 {路径:值} 平铺 JSON（可带 id/name/template 元字段，或 updates 数组）
  *   - macro_setvar  正则需带命名捕获组 (?<path>…) / (?<value>…)（或缺省取第 1/2 组）
  */
 import type { UiTemplateUpdate } from './ui-template-state'
 import { parseUpdatesPayload } from './ui-template-state'
 
-export type StateSyncDialect = 'legacy_json' | 'json_block' | 'macro_setvar'
+export type StateSyncDialect = 'updates_json' | 'json_block' | 'macro_setvar'
 
 export interface StateSyncRule {
   id?: string
@@ -31,16 +31,16 @@ export interface StateSyncRule {
   disabled?: boolean
 }
 
-/** 内置规则：旧版 原生块 + 酒馆 <UpdateVariable> 默认开启；{{setvar}} 宏误伤面大，默认关闭可手动启用 */
+/** 内置规则：本站 <ui_template_updates> 更新块 + 酒馆 <UpdateVariable> 默认开启；{{setvar}} 宏误伤面大，默认关闭可手动启用 */
 export function builtinStateSyncRules(): StateSyncRule[] {
   return [
     {
-      id: 'builtin-legacy-updates',
-      name: '旧版 更新块 <ui_template_updates>',
+      id: 'builtin-updates-block',
+      name: '更新块 <ui_template_updates>',
       pattern: '<ui_template_updates\\b[^>]*>([\\s\\S]*?)</ui_template_updates>',
       openPattern: '<ui_template_updates\\b[^>]*>[\\s\\S]*$',
       flags: 'gi',
-      dialect: 'legacy_json',
+      dialect: 'updates_json',
     },
     {
       id: 'builtin-update-variable',
@@ -61,7 +61,7 @@ export function builtinStateSyncRules(): StateSyncRule[] {
   ]
 }
 
-const DIALECTS: StateSyncDialect[] = ['legacy_json', 'json_block', 'macro_setvar']
+const DIALECTS: StateSyncDialect[] = ['updates_json', 'json_block', 'macro_setvar']
 
 /** 任意来源 → 规范规则（字段宽松兼容 enabled/disabled、dialect 别名）；正则编译失败返回 null */
 export function normalizeStateSyncRule(raw: unknown): StateSyncRule | null {
@@ -119,7 +119,7 @@ function parseJsonBlockPayload(raw: string, rule: StateSyncRule): UiTemplateUpda
     }
   }
   const fromObject = (obj: Record<string, unknown>): UiTemplateUpdate | null => {
-    if (Array.isArray(obj.updates)) return null // 交给 legacy 语义处理
+    if (Array.isArray(obj.updates)) return null // 交给 updates 方言处理
     if (obj.variables && typeof obj.variables === 'object' && !Array.isArray(obj.variables)) {
       return {
         id: typeof obj.id === 'string' ? obj.id : undefined,
@@ -190,7 +190,7 @@ export function extractStateSyncUpdates(text: string, rules: StateSyncRule[]): U
       if (rule.dialect === 'macro_setvar') {
         const upd = parseMacroPayload(m, rule)
         if (upd) out.push(upd)
-      } else if (rule.dialect === 'legacy_json') {
+      } else if (rule.dialect === 'updates_json') {
         out.push(...parseUpdatesPayload(m[1]))
       } else {
         out.push(...parseJsonBlockPayload(m[1], rule).map((u) => (rule.template && !u.id && !u.name ? { ...u, ...resolveTemplateTarget(rule.template) } : u)))
@@ -219,7 +219,7 @@ export function extractStateSyncUpdates(text: string, rules: StateSyncRule[]): U
     const seg = m[0]
     const gt = seg.indexOf('>')
     const payload = gt >= 0 ? seg.slice(gt + 1) : seg
-    if (rule.dialect === 'legacy_json') {
+    if (rule.dialect === 'updates_json') {
       out.push(...parseUpdatesPayload(payload))
     } else {
       out.push(...parseJsonBlockPayload(payload, rule).map((u) => (rule.template && !u.id && !u.name ? { ...u, ...resolveTemplateTarget(rule.template) } : u)))

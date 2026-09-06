@@ -41,7 +41,7 @@ export interface PromptOptions {
   memories?: MemoryEntry[]
   memoryCharLimit?: number
   promptEntries?: PromptPreset[]
-  /** 一次性临时规范指令（旧版"随下次发送附带"） */
+  /** 一次性临时规范指令（随下次发送附带） */
   pendingInstruction?: string
   /** 好感度状态行（每个已追踪 NPC 一条） */
   affinityLines?: string[]
@@ -53,7 +53,7 @@ export interface PromptOptions {
   uiMainModelUpdates?: boolean
   /** 变量回写规则（含内置方言）；历史消息按此剥离更新块，缺省按内置规则剥离 */
   stateSyncRules?: StateSyncRule[]
-  /** 世界书递归激活步数（默认 0 对齐旧版不链式扩散；>0 时启用 ST 式递归） */
+  /** 世界书递归激活步数（默认 0 不链式扩散；>0 时启用 ST 式递归） */
   worldInfoRecursion?: number
   /** 整页面板托管激活：AI 楼层的整页 HTML 以纯文本摘要发送，不再整段进主模型上下文 */
   aiPanelTakeover?: boolean
@@ -74,7 +74,7 @@ function nodeBody(n: MsgNode, opts: PromptOptions, ctx: { charName: string; user
   return main.trim()
 }
 
-/** 旧版 joinContent：一组世界书条目统一加 [条目名] 包裹后用空行连接 */
+/** joinContent：一组世界书条目统一加 [条目名] 包裹后用空行连接 */
 function joinWI(list: WIPlacedEntry[]): string {
   return list.map((e) => `[${(e.comment || '').trim() || 'Entry'}]\n${e.content.trim()}`).join('\n\n')
 }
@@ -132,8 +132,8 @@ function assemble(
     userName: persona?.name || '我',
   }
 
-  // ── 角色定义本体（对齐旧版 charPrompt：[Character] 下 Name/Personality/Scenario；
-  //    description 旧版虽未拼入，但 V2 卡主体在 description，缺失会丢设定，故保留为 Description 行）──
+  // ── 角色定义本体（[Character] 下 Name/Personality/Scenario；
+  //    description 是 V2 卡主体设定，缺失会丢设定，故保留为 Description 行）──
   let sysMain = ''
   if (character.systemPromptOverride?.trim()) {
     sysMain = textBody(character.systemPromptOverride, ctx)
@@ -146,10 +146,10 @@ function assemble(
   }
   if (!sysMain.trim()) sysMain = `Name: ${character.name}`
 
-  // ── 世界书解析（对齐旧版：扫描源为正则发送层之前的历史原文；连续同角色楼层先合并）──
+  // ── 世界书解析（扫描源为正则发送层之前的历史原文；连续同角色楼层先合并）──
   const worldEntries = (character.worldInfo || []) as WorldInfoEntry[]
   const floorNodes = chainNodes.filter((x) => x.role !== 'system')
-  // 对齐旧版 getPostprocessedChatMessages → mergeConsecutiveRoleMessages：相邻同角色正文以空行合并
+  // 相邻同角色正文以空行合并（mergeConsecutiveRoleMessages 语义）
   const scanTexts: string[] = []
   floorNodes.forEach((n, i) => {
     const body = nodeBody(n, opts, ctx)
@@ -162,7 +162,7 @@ function assemble(
   })
   const wi = resolveWorldInfo(worldEntries, scanTexts, opts.worldInfoRecursion ?? DEFAULT_WI_RECURSION_STEPS)
 
-  // ── system 预设：名为「破限」者置顶（旧版 systemPresetPrompt），其余系统预设包 [System Presets] ──
+  // ── system 预设：名为「破限」者置顶，其余系统预设包 [System Presets] ──
   const enabledEntries = (opts.promptEntries || []).filter((p) => p.enabled && p.content.trim())
   const sysPresetEntries = enabledEntries.filter((p) => p.role === 'system')
   const jailbreakEntries = sysPresetEntries.filter((p) => p.name === '破限')
@@ -188,9 +188,9 @@ function assemble(
     sysBlocks.push(joinWI(wi.globalNote))
     sysMeta.push([`世界书·全局注释（${wiNames(wi.globalNote)}）`])
   }
-  // 旧版固定注入的 [Style Priority]（原文，不做增改）
+  // 固定注入的 [Style Priority]
   sysBlocks.push(
-    '[Style Priority]\n开场白和历史消息只用于理解剧情事实、人物关系和场景状态，不作为文风模板；不要继承或模仿开场白、前文回复的句式、语气密度、段落节奏或排版习惯。最终回复的文风必须优先遵守上方系统预设中的规定文风。',
+    '[Style Priority]\n历史消息与开场白仅用于把握剧情事实、人物关系与当前场景，不是文风参照；不要沿用前文的句式、语气密度、段落节奏或排版习惯。正文文风一律以上方系统预设的文风规定为准。',
   )
   sysMeta.push(['固定注入·[Style Priority]'])
   // 整页面板托管策略（内置优先：压过卡内"每轮自画面板"的指令，主模型只写正文）
@@ -200,7 +200,7 @@ function assemble(
     )
     sysMeta.push(['固定注入·[UI Panel Policy]'])
   }
-  // [User Info]（对齐旧版格式与位置：Style Priority 之后）
+  // [User Info]（置于 Style Priority 之后）
   if (persona?.description?.trim() || persona?.name) {
     sysBlocks.push(`[User Info]\nName: ${persona?.name || ctx.userName}\nDescription: ${replaceMacros(persona?.description?.trim() || '', ctx)}`)
     sysMeta.push(['用户人设·[User Info]'])
@@ -227,7 +227,7 @@ function assemble(
     sysMeta.push(['托管面板状态摘要'])
   }
 
-/** 向量记忆注入（旧版 role_memory_vector_recall 同构）：description 三行说明原文 + memory_fragment XML 分片 */
+/** 向量记忆注入：description 三行说明 + memory_fragment XML 分片 */
 function formatVectorRecallBlock(entries: MemoryEntry[]): string {
   const escapeAttr = (v: unknown) =>
     String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
@@ -277,7 +277,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
     memBudget -= t.length
     return true
   }
-  // 未绑定记忆分流：向量原文分片（kind=chunk）按旧版 role_memory_vector_recall 格式整块注入；
+  // 未绑定记忆分流：向量原文分片（kind=chunk）整块注入；
   // 提炼摘要维持【此前剧情记忆】逐条注入并占用预算
   const unboundChunks = unbound.filter((m) => m.kind === 'chunk')
   const unboundSummaries = unbound.filter((m) => m.kind !== 'chunk')
@@ -297,7 +297,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
     head.push({ role: 'system', content: sysBlocks.join('\n\n'), _origins: sysMeta.flat() })
   }
 
-  // ── user/assistant 预设条目：对齐旧版 messagePresets，位于角色前奏之前 ──
+  // ── user/assistant 预设条目：位于角色前奏之前 ──
   for (const p of enabledEntries.filter((p) => p.role === 'user' || p.role === 'assistant')) {
     head.push({
       role: p.role,
@@ -306,7 +306,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
     })
   }
 
-  // ── 角色前奏（一条 user 消息，对齐旧版 characterPreludePrompt）：
+  // ── 角色前奏（一条 user 消息）：
   // before_char 世界书 → [Character] 角色定义（含示例对话原文）→ after_char 世界书 ──
   const preludeParts: string[] = []
   const preludeMeta: string[] = []
@@ -315,7 +315,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
     preludeMeta.push(`世界书·角色前（${wiNames(wi.beforeChar)}）`)
   }
   const charParts: string[] = ['[Character]', sysMain]
-  // 示例对话按旧版方式作为角色定义的纯文本一部分（不占用消息轮次、不插 system 标题）
+  // 示例对话作为角色定义的纯文本一部分（不占用消息轮次、不插 system 标题）
   const exampleText = textBody(character.mesExample, ctx)
   if (exampleText) charParts.push(exampleText)
   preludeParts.push(charParts.join('\n\n'))
@@ -363,7 +363,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
       content: body,
       _origins: [floorLabel + (isPanelDigest ? '·托管面板摘要' : '')],
     })
-    // 绑定记忆（新站特性）：挂在对应 AI 楼之后；system 会打断后续同角色合并，与旧版语义不冲突
+    // 绑定记忆：挂在对应 AI 楼之后；system 会打断后续同角色合并
     const mems = memAfterNode.get(n)
     if (mems) {
       for (const m of mems) {
@@ -377,18 +377,18 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
   }
 
   // head（system 指令层 + 预设 + 角色前奏）与历史楼层合并；@深度在最终数组上倒数插入，
-  // 对齐旧版 processMessageInjections + safeTargetLimit：插入点不得进入 head 区
+  // 插入点不得进入 head 区（safeTargetLimit）
   const merged: AssembledMessage[] = [...head, ...out]
   const safeFloor = head.length
 
-  // ── @深度世界书条目（逐字对齐旧版 processMessageInjections 的 At Depth 段，回归 R1）──
+  // ── @深度世界书条目（At Depth 段）──
   // 组内按 order 升序逐条处理；每条都在【含先前注入结果】的当前数组上从末尾重新倒数：
   // countdown=depth，每遇一条 user/assistant 消息减 1，减至 -1 时插入该消息【之前】——
-  // 即旧版口径"注入点之后还有 depth+1 条对话消息"（与 SillyTavern 的 depth 语义整体 +1，
-  // 属旧版既定行为，卡片按旧版调校须保持一致）。先前注入的 user 角色条目同样参与后续
-  // 条目的倒数（旧版如此，勿"修复"）。永不越入 head 区（safeFloor 等价旧版 safeTargetLimit
-  // = 1 + 预设数 + 角色前奏）。注入角色缺省 user（旧版硬编码 user），显式 system/assistant
-  // 为新站扩展；每条独立成消息，相邻同角色合并交给末尾统一后处理（旧版 5707 同款）。
+  // 口径为"注入点之后还有 depth+1 条对话消息"（与 SillyTavern 的 depth 语义整体 +1，
+  // 卡片按此调校须保持一致）。先前注入的 user 角色条目同样参与后续
+  // 条目的倒数，勿"修复"）。永不越入 head 区（safeFloor 等价 safeTargetLimit
+  // = 1 + 预设数 + 角色前奏）。注入角色缺省 user，显式 system/assistant
+  // 为新站扩展；每条独立成消息，相邻同角色合并交给末尾统一后处理。
   const depthEntries = [...wi.byDepth].sort((a, b) => (a.order || 0) - (b.order || 0))
   for (const d of depthEntries) {
     const content = `[${d.comment?.trim() || 'Entry'}]\n${d.content}`
@@ -410,8 +410,8 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
     })
   }
 
-  // ── user_top 世界书：前置进当前数组最后一条 user 消息（旧版顺序：在 @深度注入之后执行，
-  // 因此尾部 @深度 user 注入条目会先被当作"最后一条 user 消息"——旧版 5669-5680 同款行为）──
+  // ── user_top 世界书：前置进当前数组最后一条 user 消息（在 @深度注入之后执行，
+  // 因此尾部 @深度 user 注入条目会先被当作"最后一条 user 消息"）──
   if (wi.userTop.length) {
     let lastUser = -1
     for (let i = merged.length - 1; i >= 0; i--) {
@@ -428,7 +428,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
   const phi = textBody(character.postHistoryInstructions, ctx)
   if (phi) merged.push({ role: 'system', content: phi, _origins: ['卡 phi·post_history_instructions'] })
 
-  // ── assistant_top 世界书：末尾 system「[Instructions for next message]」（对齐旧版）──
+  // ── assistant_top 世界书：末尾 system「[Instructions for next message]」──
   if (wi.assistantTop.length) {
     merged.push({
       role: 'system',
@@ -456,7 +456,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
     }
   }
 
-  // ── 统一后处理（对齐旧版 5707-5714：先 postprocessContextMessages 合并连续同角色，
+  // ── 统一后处理（先 postprocessContextMessages 合并连续同角色，
   //    再对每条消息跑发送层正则；system 不参与合并、也不经过正则）──
   const post: AssembledMessage[] = []
   for (const msg of merged) {
@@ -473,7 +473,7 @@ function formatVectorRecallBlock(entries: MemoryEntry[]): string {
       const msg = post[i]
       if (msg.role === 'system') continue
       const placement = msg.role === 'user' ? PLACEMENT_USER_INPUT : PLACEMENT_AI_OUTPUT
-      // depth = 最终数组全长度倒数（system 楼层也占下标，与旧版口径一致）
+      // depth = 最终数组全长度倒数（system 楼层也占下标）
       msg.content = applyRegexScripts(msg.content, opts.regexScripts, placement, 'send', { depth: post.length - 1 - i })
     }
   }

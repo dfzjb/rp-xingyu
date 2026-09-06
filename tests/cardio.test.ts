@@ -54,7 +54,7 @@ const ST_V2_CARD = {
       ],
     },
     extensions: {
-      legacy_ui_templates: [
+      rp_site_ui_templates: [
         { id: 'tpl-a', name: '状态栏', htmlTemplate: '<b>{{hp}}</b>', initialVariableState: { hp: 10 } },
       ],
       regex_scripts: [{ scriptName: '清理', findRegex: '/x/g', replaceString: 'y' }],

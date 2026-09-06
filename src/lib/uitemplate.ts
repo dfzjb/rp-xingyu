@@ -1,7 +1,6 @@
 /**
  * 角色卡自带 UI 模板：归一化 + 变量引擎 + 沙箱 iframe 渲染。
- * 行为对齐旧版 app.js 的 uiTemplate 体系（{{path}} 插值、{{#each}} 循环、
- * 自动高度 iframe），模板数据来自卡的 data.uiTemplates / extensions.legacy_ui_templates。
+ * 模板体系（{{path}} 插值、{{#each}} 循环、自动高度 iframe），模板数据来自卡的 data.uiTemplates。
  */
 import { uuid } from './id'
 
@@ -67,7 +66,7 @@ export function normalizeUiTemplates(list: unknown): UiTemplate[] {
     .filter((t) => t.htmlTemplate)
 }
 
-// ── 变量引擎（对齐旧版 getUiTemplateValue / renderUiTemplateString）──
+// ── 变量引擎 ──
 
 interface EachContext {
   root: Record<string, unknown>
@@ -204,12 +203,12 @@ export function renderUiTemplateHtml(template: UiTemplate, stateOverride?: Recor
   return renderString(stripCodeFence(template.htmlTemplate), vars, null)
 }
 
-// ── 沙箱 iframe 渲染（对齐旧版 buildExecutableHtmlDocument + createExecutableHtmlIframe）──
+// ── 沙箱 iframe 渲染 ──
 
 const IFRAME_SANDBOX =
   'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-same-origin allow-downloads allow-pointer-lock allow-presentation allow-top-navigation-by-user-activation'
 
-/** iframe 内嵌脚本：自报内容高度 + triggerSlash/data-slash 桥（对齐旧版 scriptShim） */
+/** iframe 内嵌脚本：自报内容高度 + triggerSlash/data-slash 桥 */
 const HEIGHT_SHIM = `
 <script>
 (function () {
@@ -293,7 +292,7 @@ body>div:first-child{margin:0!important;max-width:100%!important;height:auto!imp
 .bottom-safe{display:none!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important;}
 </style>`
 
-/** iframe sandbox 权限（对齐旧版 htmlIframeSandbox） */
+/** iframe sandbox 权限 */
 export const HTML_IFRAME_SANDBOX = IFRAME_SANDBOX
 
 /**
@@ -347,7 +346,7 @@ export function buildHtmlDocument(rawHtml: string): string {
 }
 
 /**
- * 模板 → 可直接 v-html 的容器字符串（旧版 renderExecutableHtmlFrame 同构）：
+ * 模板 → 可直接 v-html 的容器字符串：
  * 外层 div 包一个沙箱 iframe，iframe 内部脚本自动把自身高度撑到内容高。
  */
 export function renderUiTemplateFrame(template: UiTemplate, stateOverride?: Record<string, unknown>): string {

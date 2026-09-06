@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * UI 模板管理：选择角色卡 → 查看其 uiTemplates 条目（沙箱 iframe 预览 + JSON 编辑）。
- * 数据随角色卡保存（旧版 uiTemplates 字段兼容）。
+ * 数据随角色卡保存。
  * 附：变量回写规则（state-sync）——正则驱动的更新指令方言，让其他生态角色卡也能回写面板变量。
  * 内置规则与面板状态更新器为全局配置，无需选择角色卡即可查看/调整。
  */
@@ -141,11 +141,11 @@ const RULE_PRESETS: Record<string, StateSyncRule> = {
     flags: 'gi',
     dialect: 'json_block',
   },
-  rpHub: {
-    name: '旧版 更新块 <ui_template_updates>',
+  updatesBlock: {
+    name: '更新块 <ui_template_updates>',
     pattern: '<ui_template_updates\\b[^>]*>([\\s\\S]*?)</ui_template_updates>',
     flags: 'gi',
-    dialect: 'legacy_json',
+    dialect: 'updates_json',
   },
 }
 
@@ -270,7 +270,7 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
         <!-- 全局：变量回写规则（内置规则无需选卡，始终生效） -->
         <div class="section-title" style="font-size: 0.98rem; margin-top: 22px"><Workflow /> 变量回写规则</div>
         <p style="font-size: 0.78rem; color: var(--text-2); margin-bottom: 10px; line-height: 1.7">
-          从 AI 回复中提取面板变量更新指令的正则规则（三步闭环的"解析"端，格式不限于 旧版 方言）。
+          从 AI 回复中提取面板变量更新指令的正则规则（三步闭环的"解析"端，支持多种指令格式）。
           内置规则全局生效（无需选择角色卡）；酒馆 <code v-pre>{{setvar}}</code> 宏默认关闭，需要时从下方预设添加为卡级规则。
         </p>
 
@@ -300,7 +300,7 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
             <button class="btn sm" @click="addRulePreset('updateVariable')">＋ 酒馆 &lt;UpdateVariable&gt;</button>
             <button class="btn sm" @click="addRulePreset('setvar')">＋ 酒馆 <span v-pre>{{setvar}}</span> 宏</button>
             <button class="btn sm" @click="addRulePreset('customTag')">＋ 自定义标签块</button>
-            <button class="btn sm" @click="addRulePreset('rpHub')">＋ 旧版 更新块</button>
+            <button class="btn sm" @click="addRulePreset('updatesBlock')">＋ 更新块</button>
             <button class="btn sm" style="margin-left: auto" @click="rulesEditing ? saveRulesEdit() : startRulesEdit()">
               <Save :size="13" />{{ rulesEditing ? '保存规则' : '编辑 JSON' }}
             </button>
@@ -311,7 +311,7 @@ const effectiveAux = computed<{ model: string; via: string; tone: string }>(() =
             <div v-if="rulesError" class="danger-box">{{ rulesError }}</div>
             <div style="font-size: 0.74rem; color: var(--text-2); line-height: 1.7; margin-top: 6px">
               字段：name（名称）、pattern（正则源码，捕获组 1 = JSON 载荷；macro_setvar 用命名组 &lt;path&gt;/&lt;value&gt;）、
-              flags（默认 g）、dialect（legacy_json / json_block / macro_setvar）、template（固定目标模板 id 或名称，可选）、disabled。
+              flags（默认 g）、dialect（updates_json / json_block / macro_setvar）、template（固定目标模板 id 或名称，可选）、disabled。
             </div>
           </div>
         </template>

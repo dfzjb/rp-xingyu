@@ -42,7 +42,7 @@ beforeEach(async () => {
   await db.memories.where('sessionId').equals(SESSION).delete()
 })
 
-describe('旧版同构分片构造', () => {
+describe('分片构造', () => {
   it('stripMemoryCode：剥思维链/UI 块/代码块/HTML 与代码样式行，解码实体', () => {
     const raw = [
       '<think>隐藏推理</think>',
@@ -58,7 +58,7 @@ describe('旧版同构分片构造', () => {
     expect(out).toContain('新闻：码头开放')
     expect(out).not.toContain('隐藏推理')
     expect(out).not.toContain('const')
-    // 无标点的整行标签行按旧版规则整行剔除
+    // 无标点的整行标签行整行剔除
     expect(out).not.toContain('logo')
     expect(out).not.toContain('<div')
   })
@@ -120,8 +120,8 @@ describe('旧版同构分片构造', () => {
   })
 })
 
-describe('每轮入库（向量模式，旧版规则）', () => {
-  it('开场白（无前置用户输入）不入库；user+AI 轮按旧版字段入库', async () => {
+describe('每轮入库（向量模式）', () => {
+  it('开场白（无前置用户输入）不入库；user+AI 轮按字段入库', async () => {
     const chain = [
       node('assistant', '欢迎来到星屿镇，冒险者。'),
       node('user', '我捡了 100 金币'),
@@ -140,7 +140,7 @@ describe('每轮入库（向量模式，旧版规则）', () => {
     expect(withUser).toBeTruthy()
     expect(withUser!.turn).toBe(1)
     expect(withUser!.sourceRole).toBe('mixed')
-    // 旧版语义：归一化不足 80 字的片段没有指纹（不参与指纹去重，靠节点覆盖去重）
+    // 归一化不足 80 字的片段没有指纹（不参与指纹去重，靠节点覆盖去重）
     expect(withUser!.contentFingerprint).toBe('')
   })
 

@@ -64,7 +64,7 @@ A local-first AI roleplay web app: everything lives in your browser — zero use
 - End-to-end encrypted: room messages are encrypted in-browser with a key derived from the room code — the relay only ever sees ciphertext, with **zero storage and zero logs**; campaigns live in the host's browser and can be restored in one click
 
 ### Data Management
-- Full-database backup import/export as `legacy_backup_*.json` (interoperable with the legacy 旧版); tavern JSONL chat import; usage statistics
+- Full-database backup import/export (`rp-site-backup` JSON format); tavern JSONL chat import; usage statistics
 
 ## Screenshots
 
@@ -101,26 +101,21 @@ Open "More → Language Models", enter your API base URL and key (stored only in
 - **GitHub Pages**: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) is built in — push to main and it builds & publishes automatically; set repo Settings → Pages → Source to **GitHub Actions**
 - **Service components** (optional): tabletop relay `npm run server` (single dependency: ws, port 8787), plaza service `npm run plaza` (zero dependencies, port 8788); for production prefer systemd + nginx reverse proxy — see [docs/plaza-server.md](./docs/plaza-server.md) and `deploy/`
 
-## Migrating from 旧版 (legacy)
-
-On the "Import / Export" page, pick an `legacy_backup_*.json` file to restore all character cards and chats in one click; exports from this app import back into the legacy site too.
-
 ## Tests
 
 ```bash
-npm test           # Vitest, 304 unit tests (engines / db persistence / tabletop / plaza service / legacy migration)
+npm test           # Vitest unit tests (engines / db persistence / tabletop / plaza service)
 npm run typecheck  # vue-tsc type check
 ```
 
 ## License
 
-Released under [CC BY-NC 4.0](./LICENSE) (Attribution-NonCommercial 4.0 International). Built-in preset texts are carried over from the legacy 旧版 site (CC BY-NC 4.0 © ).
+Released under [CC BY-NC 4.0](./LICENSE) (Attribution-NonCommercial 4.0 International).
 
 ## Acknowledgements
 
 - [SillyTavern](https://github.com/SillyTavern/SillyTavern) — card ecosystem and design inspiration
 - Artemis — design inspiration
-- The legacy 旧版 site (© ) — source of the built-in preset texts and direct predecessor of this project
 
 ## Disclaimer
 

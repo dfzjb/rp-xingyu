@@ -2,7 +2,7 @@
 /**
  * 正则脚本编辑器（v-model:list）。
  * 内部模型：{name, pattern, replace, flags, affectsUser, affectsAI, applyOnDisplay, applyOnSend, disabled}
- * 兼容导入酒馆扩展格式与旧版格式（normalizeRegexScript）。
+ * 兼容导入酒馆扩展格式（normalizeRegexScript）。
  */
 import { computed } from 'vue'
 import { Plus, Trash2 } from 'lucide-vue-next'
@@ -47,7 +47,7 @@ function add() {
       affectsUser: true,
       affectsAI: true,
       applyOnDisplay: true,
-      // 对齐旧版/ST：新建正则默认只做显示层美化，不进发给模型的 prompt；需要改写模型所见文本时手动勾「发送层」
+      // 新建正则默认只做显示层美化（与 ST 一致），不进发给模型的 prompt；需要改写模型所见文本时手动勾「发送层」
       applyOnSend: false,
       disabled: false,
     },
