@@ -11,13 +11,21 @@ A local-first AI roleplay web app: everything lives in your browser — zero use
 - **Bring your own model**: the browser talks directly to any OpenAI-compatible API (official, proxied or local); main chat, memory aux model, image and video models are configured independently
 - **Pure static**: the build output deploys to any static host under any sub-path — or just double-click `dist/index.html`
 
-![Main screen](docs/images/home-light.png)
+![TRPG lobby (default landing view)](docs/images/home-light.png)
 
 **Live demo**: [dfzjb.github.io/rp-xingyu](https://dfzjb.github.io/rp-xingyu/) (GitHub Pages — bring your own OpenAI-compatible API key)
 
 ## Features
 
-### Chat
+### Online Tabletop (Primary Space)
+- **Solo sessions**: play one-on-one with an AI KP/GM — no server required; a local in-memory relay stands in for WebSocket, and the story lives only in your browser
+- **Multiplayer rooms** (optional): play with friends, expression dice (1d20, 2d6+3…) visible to everyone; invite links open straight into the room
+- Rule systems: free-form / COC 7th / DND 5e / custom; quick or detailed room setup — KP style, era & tones, world, key NPCs, house rules, content red-lines, all drafted from a one-sentence idea
+- **Story modules**: chapter outlines + planned routes + ending tables + fate-wheel random tables (AI-forged at room creation, or imported as JSON); the KP advances by chapter and reports `<module>` progress — everyone watches chapters/routes/endings live in the sidebar
+- **Split storylines & game state**: personal and co-op lines each narrate their own (whoever opens a line pays for it); current area, items and key memories are maintained by the KP and synced to every sidebar in real time
+- End-to-end encrypted: room messages are encrypted in-browser with a key derived from the room code — the relay only ever sees ciphertext, with **zero storage and zero logs**; campaigns live in the host's browser and can be restored in one click
+
+### Chat (Roleplay Space)
 - SSE streaming replies with automatic chain-of-thought folding; prose and reasoning rendered separately
 - **Message tree**: re-rolls create sibling branches instead of overwriting — switch branches freely, history is never lost
 - Edit / delete / continue / speak-as-character, temporary instruction directives, image attachments
@@ -58,20 +66,14 @@ A local-first AI roleplay web app: everything lives in your browser — zero use
 - Browse a card pool and import with one click; the site ships a read-only static pool (`public/plaza/`), and the index URL can point at any remote pool
 - Upload & moderation are features of the self-hosted plaza service (zero-dependency node:http) — see [docs/plaza-server.md](./docs/plaza-server.md)
 
-### Online Tabletop
-- **Solo sessions**: play one-on-one with an AI KP/GM — no server required, the story lives only in your browser
-- Multiplayer rooms (optional): play with friends, expression dice (1d20, 2d6+3…) visible to everyone
-- Rule systems: free-form / COC 7th / DND 5e / custom; quick or detailed room setup (KP style, module synopsis, content red-lines…)
-- End-to-end encrypted: room messages are encrypted in-browser with a key derived from the room code — the relay only ever sees ciphertext, with **zero storage and zero logs**; campaigns live in the host's browser and can be restored in one click
-
 ### Data Management
 - Full-database backup import/export (`rp-site-backup` JSON format); tavern JSONL chat import; usage statistics
 
 ## Screenshots
 
-|![Dark mode](docs/images/home-dark.png)|![Memory](docs/images/memory.png)|
+|![Solo room](docs/images/hall.png)|![Memory](docs/images/memory.png)|
 |---|---|
-|![Plaza](docs/images/plaza.png)|![Tabletop](docs/images/hall.png)|
+|![Plaza](docs/images/plaza.png)|![Roleplay chat (dark)](docs/images/home-dark.png)|
 
 ## Architecture
 
@@ -94,7 +96,7 @@ npm install
 npm run dev        # http://127.0.0.1:5273
 ```
 
-Open "More → Language Models", enter your API base URL and key (stored only in your browser), fetch the model list and start chatting.
+Open "More → Language Models", enter your API base URL and key (stored only in your browser) — both KP narration and AI roleplay run on this config. The app lands on the TRPG lobby: create a persona → "创建房间" (Create Room; solo mode by default) → play. For roleplay, flip the sidebar slider to「扮演」.
 
 ## Deployment
 
