@@ -43,7 +43,8 @@ export const db = new RpDb()
 
 export const DEFAULT_SETTINGS: Settings = {
   id: 'app',
-  apiBaseUrl: 'https://dfzjb.site/v1',
+  // 站主服务器已下线：不预置任何 API 地址，用户在「更多 → 语言模型」里填自己的 OpenAI 兼容端点
+  apiBaseUrl: '',
   apiKey: '',
   imageApiBaseUrl: '',
   imageApiKey: '',
@@ -74,11 +75,14 @@ export const DEFAULT_SETTINGS: Settings = {
   themeMode: 'light' as const,
   chatCoverOpacity: 30,
   chatCoverBlur: 6,
-  plazaUrl: 'https://dfzjb.site/plaza/index.json',
-  plazaUploadUrl: 'https://dfzjb.site/plaza/api/cards',
+  // 只读静态广场：卡池索引随站点发布（public/plaza/）；自建广场服务才需要改这里
+  plazaUrl: './plaza/index.json',
+  // 静态广场无上传接口；广场上传/审核属自建服务功能（server/plaza.js）
+  plazaUploadUrl: '',
   plazaUploadToken: '',
   hallWsUrl: '',
   hallKeepCampaigns: 0,
+  lastSpace: 'hall',
   regexEnabled: true,
   memoryCharLimit: 1500,
   memoryAutoPatrol: true,

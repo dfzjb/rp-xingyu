@@ -19,20 +19,22 @@ const AffinityView = defineAsyncComponent(() => import('./views/AffinityView.vue
 const MemorySystemView = defineAsyncComponent(() => import('./views/MemorySystemView.vue'))
 const UiTemplatesView = defineAsyncComponent(() => import('./views/UiTemplatesView.vue'))
 const PlazaView = defineAsyncComponent(() => import('./views/PlazaView.vue'))
-const PlazaAdminView = defineAsyncComponent(() => import('./views/PlazaAdminView.vue'))
 const AiWorkshopView = defineAsyncComponent(() => import('./views/AiWorkshopView.vue'))
 const HallView = defineAsyncComponent(() => import('./views/HallView.vue'))
 import { hasBootInvite } from './lib/hall/useHall' // 静态引入：启动期解析邀请链接
 const MoreModal = defineAsyncComponent(() => import('./components/MoreModal.vue'))
 
-type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'plazaadmin' | 'aiworkshop' | 'hall'
+type View = 'chat' | 'affinity' | 'memory' | 'uitpl' | 'characters' | 'plaza' | 'aiworkshop' | 'hall'
+/** 双空间：hall = 跑团（主），rp = 角色扮演（附带）。侧栏滑块切换，菜单与角色列表跟随 */
+type Space = 'hall' | 'rp'
 
 const settings = useSettingsStore()
 const characters = useCharactersStore()
 const chat = useChatStore()
 const personas = usePersonasStore()
 
-const view = ref<View>(hasBootInvite() ? 'hall' : 'chat') // 邀请链接直达在线跑团
+const view = ref<View>('hall') // 默认落在跑团空间；邀请链接直达在线跑团
+const space = ref<Space>('hall')
 const sidebarOpen = ref(false)
 const moreShow = ref(false)
 const moreTab = ref('presets')
@@ -100,20 +102,32 @@ async function toggleTheme() {
   await settings.patch({ themeMode: isLight.value ? 'dark' : 'light' })
 }
 
-const NAV: { key: View; icon: typeof MessagesSquare; label: string }[] = [
+const NAV_RP: { key: View; icon: typeof MessagesSquare; label: string }[] = [
   { key: 'chat', icon: MessagesSquare, label: '聊天' },
   { key: 'characters', icon: LibraryBig, label: '角色卡管理' },
   { key: 'affinity', icon: Heart, label: '好感度' },
   { key: 'memory', icon: BrainCircuit, label: '记忆系统' },
   { key: 'uitpl', icon: LayoutTemplate, label: 'UI 模板' },
   { key: 'plaza', icon: Store, label: '卡片广场' },
-  { key: 'hall', icon: Dices, label: '在线跑团' },
   { key: 'aiworkshop', icon: Wand2, label: 'AI 工作台' },
 ]
+const NAV_HALL: { key: View; icon: typeof MessagesSquare; label: string }[] = [
+  { key: 'hall', icon: Dices, label: '在线跑团' },
+]
+const navList = computed(() => (space.value === 'hall' ? NAV_HALL : NAV_RP))
 
 function switchView(v: string) {
   view.value = v as View
   sidebarOpen.value = false
+}
+
+/** 切换空间：视图重置为该空间默认页，并记住选择（下次打开恢复） */
+function switchSpace(s: Space) {
+  if (space.value === s) return
+  space.value = s
+  view.value = s === 'hall' ? 'hall' : 'chat'
+  sidebarOpen.value = false
+  void settings.patch({ lastSpace: s })
 }
 
 async function pickCharacter(uuid: string) {
@@ -136,6 +150,12 @@ function onChatGoto(target: string) {
 onMounted(async () => {
   await Promise.all([settings.load(), characters.load(), chat.load(), personas.load()])
   document.documentElement.setAttribute('data-theme', isLight.value ? 'light' : 'dark')
+  // 恢复上次所在空间（邀请链接除外：必须直达跑团房间）
+  if (!hasBootInvite()) {
+    const s: Space = settings.settings.lastSpace === 'rp' ? 'rp' : 'hall'
+    space.value = s
+    view.value = s === 'hall' ? 'hall' : 'chat'
+  }
   const target = settings.settings.lastActiveCharUuid || characters.list[0]?.uuid
   if (target) await chat.openCharacter(target)
   window.addEventListener('beforeunload', () => { void chat.flushOnUnload() })
@@ -164,9 +184,20 @@ onMounted(async () => {
               </div>
             </div>
 
+            <!-- 空间滑块：跑团（主） / 角色扮演 -->
+            <div class="space-switch" :class="{ rp: space === 'rp' }" role="radiogroup" aria-label="空间切换">
+              <div class="space-thumb" />
+              <button :class="{ on: space === 'hall' }" title="在线跑团：开团 / AI KP / 掷骰 / 模组" @click="switchSpace('hall')">
+                <Dices :size="14" /> 跑团
+              </button>
+              <button :class="{ on: space === 'rp' }" title="角色扮演：聊天 / 角色卡 / 记忆" @click="switchSpace('rp')">
+                <MessagesSquare :size="14" /> 扮演
+              </button>
+            </div>
+
             <nav class="nav-list">
               <button
-                v-for="n in NAV"
+                v-for="n in navList"
                 :key="n.key"
                 class="nav-item"
                 :class="{ active: view === n.key }"
@@ -181,7 +212,7 @@ onMounted(async () => {
               </button>
             </nav>
 
-            <div class="sidebar-scroll">
+            <div v-if="space === 'rp'" class="sidebar-scroll">
               <div class="sidebar-section-title">
                 角色（{{ characters.list.length }}）
                 <button title="角色卡管理" @click="switchView('characters')">
@@ -225,13 +256,12 @@ onMounted(async () => {
             <UiTemplatesView v-if="view === 'uitpl'" />
             <CharactersView v-if="view === 'characters'" @open-ai-workshop="view = 'aiworkshop'" />
             <PlazaView v-if="view === 'plaza'" />
-            <PlazaAdminView v-else-if="view === 'plazaadmin'" @back="switchView('plaza')" />
             <AiWorkshopView v-if="view === 'aiworkshop'" @close="view = 'characters'" @goto="switchView" />
             <HallView v-if="view === 'hall'" />
           </main>
 
           <!-- 「更多」弹窗（首次打开时才加载） -->
-          <MoreModal v-if="moreMounted" v-model:show="moreShow" :initial-tab="moreTab" @admin="switchView('plazaadmin')" />
+          <MoreModal v-if="moreMounted" v-model:show="moreShow" :initial-tab="moreTab" />
 
           <!-- 轻量 toast -->
           <Toaster />

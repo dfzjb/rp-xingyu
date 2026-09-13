@@ -197,14 +197,16 @@ export interface Settings {
   /** 聊天区角色卡封面背景：浓度 0-100（0=关闭）与模糊半径 px */
   chatCoverOpacity: number
   chatCoverBlur: number
-  plazaUrl: string // 角色卡广场索引地址（index.json，默认指向站主广场服务）
-  /** 广场上传接口地址（server/plaza.js 的 /plaza/api/cards，开放上传进待审区） */
+  plazaUrl: string // 角色卡广场索引地址（index.json；默认指向随站点发布的只读静态卡池）
+  /** 广场上传接口地址（server/plaza.js 的 /plaza/api/cards；仅自建广场服务时填写，静态广场无上传） */
   plazaUploadUrl: string
   /** 广场管理口令（审核上架/拒绝/下架凭据 = 服务器 PLAZA_TOKEN；只存本机浏览器） */
   plazaUploadToken: string
-  hallWsUrl: string // 在线跑团中继地址（ws(s)://…，留空 = 同源 /ws；服务端需自行部署 rp-site 内的 server/）
+  hallWsUrl: string // 在线跑团联机中继地址（ws(s)://…，留空 = 未配置联机；单机团不需要）
   /** 跑团「我的团」保留最近 N 场战役（0 = 全部保留）；超出自动删除最旧的 */
   hallKeepCampaigns: number
+  /** 上次所在空间（hall = 跑团，rp = 角色扮演）：启动时恢复 */
+  lastSpace: 'hall' | 'rp'
   regexEnabled: boolean // 全局启用正则脚本（显示层与发送层）
   memoryCharLimit: number // 经典记忆注入总字数上限
   memoryAutoPatrol: boolean // 记忆自动巡逻提炼开关

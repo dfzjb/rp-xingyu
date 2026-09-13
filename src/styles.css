@@ -290,6 +290,49 @@ body {
   box-shadow: 0 0 8px rgba(52, 211, 153, 0.8);
 }
 
+/* 空间滑块：跑团（主） / 角色扮演，菜单与角色列表跟随切换 */
+.space-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+  margin: 2px 14px 6px;
+  user-select: none;
+}
+.space-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  border-radius: 999px;
+  background: var(--accent-grad);
+  box-shadow: 0 3px 12px rgba(139, 92, 246, 0.35);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.space-switch.rp .space-thumb { transform: translateX(100%); }
+.space-switch button {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 6px 0;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: color 0.15s;
+}
+.space-switch button.on { color: #fff; }
+
 .nav-list { padding: 8px 12px 4px; display: flex; flex-direction: column; gap: 3px; }
 .nav-item {
   position: relative;
