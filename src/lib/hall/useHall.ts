@@ -4,10 +4,12 @@
  * 角色划分：房主 = 权威节点，持有战役、执行 KP 流式生成（复用主站模型设置与 streamChat）、
  * 给中途加入者补发快照；中继只转发端到端密文与房间公开元数据（标题/简介/封面/是否上锁），
  * 服务器零存储。上锁房间密钥种子 = 房间码:密码，密码不出本机。
+ * 联机不可用时可选「单机团」：LocalRelay 本机回环中继顶替 WebSocket，协议与持久化路径完全一致。
  */
 import { computed, reactive } from 'vue'
 import { deriveRoomKey, keyProof, genRoomCode, openEvent, sealEvent, roomSecret } from './crypto'
-import { isPersisted, newEventId, PARTY_LINE, DEFAULT_HALL_RELAY, type HallCampaign, type HallRelayMode, type HallScene, type MemberInfo, type RoomEvent, type RoomMeta } from './protocol'
+import { isPersisted, newEventId, PARTY_LINE, type HallCampaign, type HallRelayMode, type HallScene, type MemberInfo, type RoomEvent, type RoomMeta } from './protocol'
+import { LocalRelay, LOCAL_RELAY_URL, RS_CONNECTING, RS_OPEN, type RelaySocket } from './localRelay'
 import { formatRoll, rollDice } from './dice'
 import { buildKpMessages, buildRollNudge, extractRollRequests, extractStateUpdate, lineOf, renderSceneBlock, stripKpOutput } from './kp'
 import { emptySetting, KP_STYLES, RULE_PRESETS, type RoomSetting } from './rules'
@@ -36,7 +38,7 @@ export interface CreateMeta {
   setting?: RoomSetting | null
   /** 剧情模组（创建时从模组库挂载或导入；只走房主本地持久化与 E2EE 同步，不发给中继） */
   module?: GameModule | null
-  /** 中继模式：shared = 公共共享中继（默认）；private = 房主自己的中继，凭邀请链接进入 */
+  /** 中继模式：local = 单机团（默认）；shared = 公共共享中继；private = 房主自己的中继，凭邀请链接进入 */
   relay?: HallRelayMode
 }
 
@@ -60,7 +62,7 @@ export function newCampaign(name: string, roomCode: string, meta?: Partial<Creat
     cover: meta?.cover ?? '',
     setting: meta?.setting ?? null,
     module: meta?.module ?? null,
-    relay: meta?.relay ?? 'shared',
+    relay: meta?.relay ?? 'local',
   }
 }
 
@@ -109,10 +111,10 @@ function wsSameOrigin(): string {
   return `${proto}//${location.host}/ws`
 }
 
-/** 我的中继：大厅列表与默认进房连接的地址；设置留空 = 公共共享中继 */
+/** 我的中继：大厅列表与共享房间连接的地址；留空 = 未配置联机（单机团不受影响） */
 export function myRelayUrl(): string {
   const s = useSettingsStore()
-  return s.settings.hallWsUrl.trim() || DEFAULT_HALL_RELAY
+  return s.settings.hallWsUrl.trim()
 }
 
 /** 私人中继：房主自己的；留空 = 同源 /ws（自托管站点可用；GitHub Pages 部署必须填写） */
@@ -121,9 +123,10 @@ export function ownRelayUrl(): string {
   return s.settings.hallWsUrl.trim() || wsSameOrigin()
 }
 
-/** 房间实际使用的中继：shared = 公共默认，private = 房主自己的，未标记（老存档）= 跟随我的设置 */
+/** 房间实际使用的中继：local = 本机单机中继，shared = 「我的中继」，private = 房主自己的，未标记（老存档）= 跟随我的设置 */
 export function relayOfRoom(mode: HallRelayMode | null | undefined): string {
-  if (mode === 'shared') return DEFAULT_HALL_RELAY
+  if (mode === 'local') return LOCAL_RELAY_URL
+  if (mode === 'shared') return myRelayUrl()
   if (mode === 'private') return ownRelayUrl()
   return myRelayUrl()
 }
@@ -239,8 +242,8 @@ const lobby = reactive({
   rooms: [] as RoomMeta[],
 })
 
-let ws: WebSocket | null = null // 房间连接
-let lobbyWs: WebSocket | null = null // 大厅列表连接
+let ws: RelaySocket | null = null // 房间连接（真实 WebSocket 或单机 LocalRelay）
+let lobbyWs: RelaySocket | null = null // 大厅列表连接
 let lobbyRetry: ReturnType<typeof setTimeout> | null = null
 let key: CryptoKey | null = null
 let campaign: HallCampaign | null = null // 仅房主持有
@@ -274,12 +277,17 @@ function roster(): MemberInfo[] {
 // ── 大厅：在线房间列表 ──
 
 export function connectLobby() {
-  if (lobbyWs && (lobbyWs.readyState === WebSocket.OPEN || lobbyWs.readyState === WebSocket.CONNECTING)) return
-  const s = useSettingsStore()
+  if (lobbyWs && (lobbyWs.readyState === RS_OPEN || lobbyWs.readyState === RS_CONNECTING)) return
   const url = myRelayUrl()
+  if (!url) {
+    // 未配置联机中继：大厅保持离线，不重试（单机团不经过这里）
+    lobby.status = 'off'
+    lobby.rooms = []
+    return
+  }
   lobby.status = 'connecting'
   try {
-    lobbyWs = new WebSocket(url)
+    lobbyWs = new WebSocket(url) as unknown as RelaySocket
   } catch {
     lobby.status = 'off'
     return
@@ -444,12 +452,22 @@ export async function connect(opts: {
   if (locked) frame.proof = await keyProof(secret)
 
   state.roomRelay = relayUrl
-  try {
-    ws = new WebSocket(relayUrl)
-  } catch (err) {
-    state.phase = 'error'
-    state.error = `无法连接中继：${(err as Error).message}`
-    return
+  if (relayUrl === LOCAL_RELAY_URL) {
+    // 单机团：本机回环中继，握手与信令路由在本进程内完成
+    ws = new LocalRelay()
+  } else {
+    if (!relayUrl) {
+      state.phase = 'error'
+      state.error = '未配置联机中继——单机团请在创建房间时选「单机团」；要联机先在「模型 → 高级」里填好「我的中继」地址'
+      return
+    }
+    try {
+      ws = new WebSocket(relayUrl) as unknown as RelaySocket
+    } catch (err) {
+      state.phase = 'error'
+      state.error = `无法连接中继：${(err as Error).message}`
+      return
+    }
   }
 
   ws.onopen = () => ws!.send(JSON.stringify(frame))

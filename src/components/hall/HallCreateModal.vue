@@ -9,7 +9,7 @@ import {
   type CreateMeta, type Profile,
 } from '../../lib/hall/useHall'
 import { genRoomCode } from '../../lib/hall/crypto'
-import { DEFAULT_HALL_RELAY, type HallRelayMode } from '../../lib/hall/protocol'
+import { type HallRelayMode } from '../../lib/hall/protocol'
 import { useSettingsStore } from '../../stores/settings'
 import { RULE_PRESETS, TONE_OPTIONS, KP_STYLES, emptySetting, isEmptySetting, type RoomSetting } from '../../lib/hall/rules'
 import { normalizeModule, type GameModule, type ModuleAiConfig } from '../../lib/hall/module'
@@ -24,12 +24,13 @@ const MODE_KEY = 'hall.createMode'
 const mode = ref<'simple' | 'pro'>((localStorage.getItem(MODE_KEY) as 'pro') === 'pro' ? 'pro' : 'simple')
 watch(mode, (m) => localStorage.setItem(MODE_KEY, m))
 
-// ── 中继模式：共享（公共大厅） / 私人（自己的中继，邀请链接进房）；记住上次选择 ──
+// ── 中继模式：单机团（本机回环，默认） / 共享（我的中继） / 私人（自己的中继，邀请链接进房）；记住上次选择 ──
 const RELAY_KEY = 'hall.relayMode'
-const relayMode = ref<HallRelayMode>((localStorage.getItem(RELAY_KEY) as 'private') === 'private' ? 'private' : 'shared')
+const storedRelay = localStorage.getItem(RELAY_KEY)
+const relayMode = ref<HallRelayMode>(storedRelay === 'shared' || storedRelay === 'private' ? storedRelay : 'local')
 watch(relayMode, (m) => localStorage.setItem(RELAY_KEY, m))
 const settingsStore = useSettingsStore()
-const hasOwnRelay = computed(() => !!settingsStore.settings.hallWsUrl.trim())
+const myRelay = computed(() => settingsStore.settings.hallWsUrl.trim())
 
 // ── 入场身份（人设）──
 const personas = usePersonasStore()
@@ -303,19 +304,25 @@ watch(() => hall.state.phase, (p) => { if (p === 'room') emit('close') })
         </div>
 
         <div class="field">
-          <label>房间可见性 <span class="group-sub">决定房间开在哪个中继上，创建后不可改</span></label>
+          <label>房间可见性 <span class="group-sub">决定房间开在哪，创建后不可改</span></label>
           <div class="mode-switch relay-switch" role="radiogroup" aria-label="房间可见性">
-            <div class="mode-thumb" :class="{ right: relayMode === 'private' }" />
+            <button type="button" :class="{ on: relayMode === 'local' }" @click="relayMode = 'local'">单机团</button>
             <button type="button" :class="{ on: relayMode === 'shared' }" @click="relayMode = 'shared'">共享大厅</button>
             <button type="button" :class="{ on: relayMode === 'private' }" @click="relayMode = 'private'">私人中继</button>
           </div>
           <div class="relay-hint">
-            <template v-if="relayMode === 'shared'">
-              开在公共共享中继（{{ DEFAULT_HALL_RELAY }}）：所有人都能在「共享大厅」列表里看到，点击或凭密码进入
+            <template v-if="relayMode === 'local'">
+              开在本机：只有你和 AI KP，剧情只存在你的浏览器，不需要中继服务器。想拉朋友联机，再切另外两种
+            </template>
+            <template v-else-if="relayMode === 'shared'">
+              开在「我的中继」所指的公共中继上：所有人都能在「共享大厅」列表里看到，点击或凭密码进入
+              <span v-if="!myRelay" class="relay-warn">
+                尚未配置联机中继——共享大厅不可用。可先改选「单机团」，或在「模型 → 高级」里填「我的中继」
+              </span>
             </template>
             <template v-else>
               开在你自己的中继上：公共大厅看不到，朋友只能通过房间内的<b>「邀请」</b>按钮生成的链接进入
-              <span v-if="!hasOwnRelay" class="relay-warn">
+              <span v-if="!myRelay" class="relay-warn">
                 尚未配置私人中继——将使用本页自身地址（仅限本地/自托管同源部署；GitHub Pages 部署请先在「模型 → 高级」填写我的中继）
               </span>
             </template>
@@ -584,10 +591,10 @@ html[data-theme='light'] .mode-switch button.on { color: #fff; }
 }
 .mode-hint svg { flex-shrink: 0; color: var(--accent); }
 
-/* 房间可见性：共享 / 私人 */
-.relay-switch { width: 176px; margin-bottom: 8px; }
-.relay-switch .mode-thumb { background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(16, 185, 129, 0.8)); }
-.relay-switch .mode-thumb.right { transform: translateX(100%); }
+/* 房间可见性：单机 / 共享 / 私人（三档，无滑块，选中态直接上色） */
+.relay-switch { width: 252px; margin-bottom: 8px; grid-template-columns: repeat(3, 1fr); }
+.relay-switch .mode-thumb { display: none; }
+.relay-switch button.on { background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(16, 185, 129, 0.8)); }
 .relay-hint {
   font-size: 0.72rem; color: var(--text-2); line-height: 1.6;
   background: var(--bg-2); border: 1px solid var(--line);

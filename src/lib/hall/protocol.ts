@@ -125,8 +125,8 @@ export interface RoomMeta {
   players: number
 }
 
-/** 房间中继模式：shared = 公共共享中继（开在公共大厅列表）；private = 房主自己的中继（不在公共列表，凭邀请链接进入） */
-export type HallRelayMode = 'shared' | 'private'
+/** 房间中继模式：local = 单机团（本机回环中继，无其他成员）；shared = 公共共享中继（开在「我的中继」）；private = 房主自己的中继（不在公共列表，凭邀请链接进入） */
+export type HallRelayMode = 'shared' | 'private' | 'local'
 
-/** 公共共享中继（站主维护的 E2EE 哑管道）：共享房间都开在这里，GitHub Pages 部署的默认入口 */
-export const DEFAULT_HALL_RELAY = 'wss://dfzjb.site/ws'
+/** 公共共享中继默认地址（已停用：站主服务器 2026-09-13 下线）。留空 = 未配置联机，大厅与共享房间不可用，单机团不受影响 */
+export const DEFAULT_HALL_RELAY = ''

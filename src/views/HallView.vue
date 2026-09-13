@@ -6,11 +6,13 @@ import {
   buildInviteLink, consumeBootInvite,
   type Profile,
 } from '../lib/hall/useHall'
-import { DEFAULT_HALL_RELAY, type RoomMeta } from '../lib/hall/protocol'
+import { type RoomMeta } from '../lib/hall/protocol'
+import { LOCAL_RELAY_URL } from '../lib/hall/localRelay'
 import { PARTY_LINE } from '../lib/hall/protocol'
 import { lineOf } from '../lib/hall/kp'
 import { systemLabel } from '../lib/hall/rules'
 import { usePersonasStore } from '../stores/personas'
+import { useSettingsStore } from '../stores/settings'
 import '../hall.css'
 import HallStoryStream from '../components/hall/HallStoryStream.vue'
 import HallComposer from '../components/hall/HallComposer.vue'
@@ -29,6 +31,11 @@ import HallCampaignsPanel from '../components/hall/HallCampaignsPanel.vue'
 
 // ── 大厅 / 房间切换 ──
 const inRoom = computed(() => hall.state.phase === 'room' || hall.state.phase === 'connecting')
+
+// ── 联机中继状态：未配置时大厅提示单机团兜底；单机房间不显示「邀请」（没有可邀请的人）──
+const settingsStore = useSettingsStore()
+const myRelay = computed(() => settingsStore.settings.hallWsUrl.trim())
+const isLocalRoom = computed(() => hall.state.roomRelay === LOCAL_RELAY_URL)
 
 // ── 分线视图：只显示当前线的剧情，KP 流式气泡也只落在它自己的线上 ──
 const visibleEvents = computed(() => hall.state.events.filter((e) => lineOf(e) === hall.state.currentScene))
@@ -183,11 +190,12 @@ watch(() => hall.state.error, (e) => {
         <ScrollText :size="13" />{{ briefLabel }}
       </button>
       <div class="hall-topbar-right">
-        <button class="btn ghost sm" title="复制邀请链接：朋友点开直接进房（私人房间的唯一入口）" @click="copyInvite">
+        <button v-if="!isLocalRoom" class="btn ghost sm" title="复制邀请链接：朋友点开直接进房（私人房间的唯一入口）" @click="copyInvite">
           <Share2 :size="13" />{{ inviteCopied ? '已复制' : '邀请' }}
         </button>
         <span class="hall-online">{{ hall.memberList.value.length }} 人在线</span>
         <span v-if="hall.state.isHost" class="hall-tag">房主</span>
+        <span v-if="isLocalRoom" class="hall-tag" title="单机团：剧情只存本机浏览器">单机</span>
         <button class="btn ghost sm" @click="leaveRoom()"><LogOut :size="13" />退出房间</button>
       </div>
     </header>
@@ -222,7 +230,7 @@ watch(() => hall.state.error, (e) => {
           </div>
           <div style="flex: 1" />
           <span v-if="hall.lobby.status === 'connecting'" class="hall-sys-line">正在连接大厅…</span>
-          <span v-else-if="hall.lobby.status === 'off'" class="hall-sys-line">大厅离线——无法连接中继（默认 {{ DEFAULT_HALL_RELAY }}）</span>
+          <span v-else-if="hall.lobby.status === 'off'" class="hall-sys-line">{{ myRelay ? '大厅离线——无法连接中继' : '联机未配置——单机团不受影响' }}</span>
           <button class="btn sm" title="KP 模型设置（只影响在线跑团，未配置时用「更多 → 语言模型」）" @click="showSettings = true"><Cpu :size="13" />模型</button>
           <button class="btn sm" title="刷新列表" @click="connectLobby()"><RefreshCw :size="13" />刷新</button>
           <button class="btn sm" title="管理你的人设（进房身份）" @click="showPersona = true"><UserRound :size="13" />人设</button>
@@ -289,8 +297,13 @@ watch(() => hall.state.error, (e) => {
 
             <!-- 大厅离线提示 -->
             <div v-if="hall.lobby.status === 'off'" class="card-panel" style="margin-top: 16px; padding: 12px 14px; font-size: 0.8rem; color: var(--text-2)">
-              无法连接中继：房间列表不可用。默认使用共享中继（{{ DEFAULT_HALL_RELAY }}）；
-              想用自己的，在「模型 → 高级」里填「我的中继」（本地开发可 <code>npm run server</code> 后填 <code>ws://127.0.0.1:8787/ws</code>）。点右上角「刷新」重试。
+              <template v-if="myRelay">
+                无法连接中继（{{ myRelay }}）：在线房间列表不可用。点右上角「刷新」重试。
+              </template>
+              <template v-else>
+                未配置联机中继：在线房间列表不可用，<b>单机团不受影响</b>——点「创建房间」选「单机团」即可开局。
+                想和朋友联机：自行部署 <code>server/index.js</code> 后，在「模型 → 高级」里填「我的中继」（本地开发可 <code>npm run server</code> 后填 <code>ws://127.0.0.1:8787/ws</code>）。
+              </template>
             </div>
           </div>
 

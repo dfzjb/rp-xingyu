@@ -23,8 +23,9 @@ describe('邀请链接', () => {
     expect(parseInvite('?join=ABC234')?.code).toBe('abc234') // 大小写归一
   })
 
-  it('HallRelayMode 两个取值都能被 relayOfRoom 语义覆盖（契约冒烟）', () => {
-    const modes: HallRelayMode[] = ['shared', 'private']
+  it('HallRelayMode 三个取值都能被 relayOfRoom 语义覆盖（契约冒烟）', () => {
+    const modes: HallRelayMode[] = ['local', 'shared', 'private']
+    expect(modes).toContain('local')
     expect(modes).toContain('shared')
     expect(modes).toContain('private')
   })

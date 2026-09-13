@@ -111,7 +111,7 @@ async function save() {
         <template v-if="draft.enabled">
           <div class="field">
             <label>Base URL</label>
-            <NInput v-model:value="draft.baseUrl" placeholder="https://dfzjb.site/v1" round size="small" />
+            <NInput v-model:value="draft.baseUrl" placeholder="https://api.example.com/v1（OpenAI 兼容端点）" round size="small" />
           </div>
           <div class="field">
             <label>API Key</label>
