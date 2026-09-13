@@ -5,7 +5,7 @@
 [![CI](https://github.com/dfzjb/rp-xingyu/actions/workflows/ci.yml/badge.svg?style=flat-square)](https://github.com/dfzjb/rp-xingyu/actions/workflows/ci.yml)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey?style=flat-square)](./LICENSE)
 
-本地优先的 AI 角色扮演 Web 应用：所有数据只存在你的浏览器里——服务器零用户数据、无账号、无遥测。兼容 SillyTavern 角色卡生态，内置记忆系统、世界书、正则脚本、好感度引擎、交互式 UI 模板、卡片广场与端到端加密的多人在线跑团。
+本地优先的 AI 角色扮演 Web 应用：所有数据只存在你的浏览器里——服务器零用户数据、无账号、无遥测。兼容 SillyTavern 角色卡生态，内置记忆系统、世界书、正则脚本、好感度引擎、交互式 UI 模板与卡片广场；**以在线跑团为主空间**（侧栏滑块在「跑团 / 角色扮演」双空间间切换），支持单机开团与端到端加密的多人联机。
 
 - **本地优先**：角色卡、聊天记录、API Key 全部存于浏览器 IndexedDB，随时一键备份/恢复
 - **模型自由**：浏览器直连任何 OpenAI 兼容 API（官方/中转/本地均可），主对话、记忆副模型、图片与视频生成模型独立配置
@@ -13,7 +13,7 @@
 
 ![主界面](docs/images/home-light.png)
 
-**在线体验**：[xy.dfzjb.site](https://xy.dfzjb.site/) （站主实例，自带 API Key 即可直接使用）
+**在线体验**：[dfzjb.github.io/rp-xingyu](https://dfzjb.github.io/rp-xingyu/) （GitHub Pages，自带 API Key 即可直接使用）
 
 ## 功能一览
 
@@ -56,11 +56,12 @@
 - 自建带角色的有序条目；预设面板内置条目防误删
 
 ### 卡片广场
-- 浏览远程卡池一键导入；开放上传（先审后上架）；站主凭管理口令解锁审核后台
-- 自建广场服务零依赖（node:http），详见 [docs/plaza-server.md](./docs/plaza-server.md)
+- 浏览卡池一键导入；站点自带随仓库发布的只读静态卡池（`public/plaza/`），也可把索引地址指向任何远程卡池
+- 上传与审核属自建广场服务功能（node:http 零依赖），详见 [docs/plaza-server.md](./docs/plaza-server.md)
 
 ### 在线跑团
-- 多人房间 + AI 担任 KP，玩家各饰一角；表达式骰子（1d20、2d6+3…）全员可见
+- **单机团**：一人 + AI KP 直接开团，不需要任何服务器，剧情只存你的浏览器
+- 联机房间（可选）：多人房间 + AI 担任 KP，玩家各饰一角；表达式骰子（1d20、2d6+3…）全员可见
 - 规则系统：自由团 / COC7th / DND5e / 自定义；简洁/详细两种开团模式（KP 风格、模组梗概、内容红线等）
 - **剧情模组**：章节大纲 + 规划路线 + 结局表 + 命运转盘随机表（开团时直接 AI 锻造，或工作台生成/导入 JSON）；KP 按章节推进、`<module>` 自动上报进度，全员侧栏实时看章节/路线/结局图鉴，开局转出身、途中转遭遇
 - 端到端加密：房间消息在浏览器内用房间码派生密钥加密，中继只见密文、**零存储零日志**；战役只存房主浏览器，可一键恢复重开
@@ -80,11 +81,11 @@
 graph LR
     B["浏览器 SPA<br/>Vue 3 + Pinia + Dexie<br/>全部用户数据存 IndexedDB"]
     B <-- "浏览器直连<br/>OpenAI 兼容 API (SSE)" --> A["你的 API"]
-    B <-- "角色卡清单/上传/审核" --> P["广场服务<br/>server/plaza.js"]
-    B <-- "E2EE 密文转发<br/>零存储零日志" --> R["跑团中继<br/>server/index.js (ws)"]
+    B <-. "角色卡清单/上传/审核<br/>（自建广场服务时）" .-> P["广场服务<br/>server/plaza.js"]
+    B <-. "E2EE 密文转发 零存储零日志<br/>（联机跑团时；单机团不需要）" .-> R["跑团中继<br/>server/index.js (ws)"]
 ```
 
-服务器**永远不接触**你的对话内容与 API Key：跑团消息端到端加密，广场只托管角色卡文件与待审队列。纯静态部署时只跑前端，两个服务组件按需自建。
+服务器**永远不接触**你的对话内容与 API Key：跑团消息端到端加密，广场只托管角色卡文件。纯静态部署只跑前端即可用——单机团与角色扮演完全不依赖服务器，联机跑团与广场上传按需自建。
 
 ## 快速开始
 
@@ -101,7 +102,7 @@ npm run dev        # http://127.0.0.1:5273
 
 - **任意静态托管**：`npm run build` → `dist/`（`base: './'`，支持任意子路径，也可双击 index.html 离线使用）
 - **GitHub Pages**：仓库已内置 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)——推送到 main 自动构建发布；仓库 Settings → Pages → Source 选 **GitHub Actions** 即可
-- **自建服务组件**（可选）：在线跑团中继 `npm run server`（唯一依赖 ws，端口 8787）、广场服务 `npm run plaza`（零依赖，端口 8788）；生产环境建议 systemd + nginx 反代，参见 [docs/plaza-server.md](./docs/plaza-server.md) 与 `deploy/`
+- **自建服务组件**（可选）：联机跑团中继 `npm run server`（唯一依赖 ws，端口 8787）、广场上传服务 `npm run plaza`（零依赖，端口 8788）；生产环境建议 systemd + nginx 反代，参见 [docs/plaza-server.md](./docs/plaza-server.md) 与 `deploy/`
 
 ## 测试
 

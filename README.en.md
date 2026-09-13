@@ -5,7 +5,7 @@
 [![CI](https://github.com/dfzjb/rp-xingyu/actions/workflows/ci.yml/badge.svg?style=flat-square)](https://github.com/dfzjb/rp-xingyu/actions/workflows/ci.yml)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey?style=flat-square)](./LICENSE)
 
-A local-first AI roleplay web app: everything lives in your browser — zero user data on the server, no accounts, no telemetry. Compatible with the SillyTavern character-card ecosystem, with built-in memory systems, world books, regex scripts, an affinity engine, interactive UI templates, a card plaza, and end-to-end encrypted multiplayer tabletop RP.
+A local-first AI roleplay web app: everything lives in your browser — zero user data on the server, no accounts, no telemetry. Compatible with the SillyTavern character-card ecosystem, with built-in memory systems, world books, regex scripts, an affinity engine, interactive UI templates and a card plaza. **Online tabletop is the primary space** (a sidebar slider switches between the TRPG and roleplay spaces), supporting both solo sessions and end-to-end encrypted multiplayer.
 
 - **Local-first**: character cards, chat history and API keys all live in your browser's IndexedDB; back up any time with one click
 - **Bring your own model**: the browser talks directly to any OpenAI-compatible API (official, proxied or local); main chat, memory aux model, image and video models are configured independently
@@ -13,7 +13,7 @@ A local-first AI roleplay web app: everything lives in your browser — zero use
 
 ![Main screen](docs/images/home-light.png)
 
-**Live demo**: [xy.dfzjb.site](https://xy.dfzjb.site/) (owner-run instance — bring your own OpenAI-compatible API key)
+**Live demo**: [dfzjb.github.io/rp-xingyu](https://dfzjb.github.io/rp-xingyu/) (GitHub Pages — bring your own OpenAI-compatible API key)
 
 ## Features
 
@@ -55,11 +55,12 @@ A local-first AI roleplay web app: everything lives in your browser — zero use
 - 15 battle-tested built-in entries (jailbreak, anti-speaking-for-user, anti-omniscience, anti-repetition, prose style, timestamps, perspective…), always present, toggleable, one-click reset
 
 ### Card Plaza
-- Browse a remote card pool and import with one click; open uploads (review before publish); owners unlock the moderation console with an admin token
-- Self-hosted plaza service with zero dependencies (node:http) — see [docs/plaza-server.md](./docs/plaza-server.md)
+- Browse a card pool and import with one click; the site ships a read-only static pool (`public/plaza/`), and the index URL can point at any remote pool
+- Upload & moderation are features of the self-hosted plaza service (zero-dependency node:http) — see [docs/plaza-server.md](./docs/plaza-server.md)
 
 ### Online Tabletop
-- Multiplayer rooms with an AI KP/GM; expression dice (1d20, 2d6+3…) visible to everyone
+- **Solo sessions**: play one-on-one with an AI KP/GM — no server required, the story lives only in your browser
+- Multiplayer rooms (optional): play with friends, expression dice (1d20, 2d6+3…) visible to everyone
 - Rule systems: free-form / COC 7th / DND 5e / custom; quick or detailed room setup (KP style, module synopsis, content red-lines…)
 - End-to-end encrypted: room messages are encrypted in-browser with a key derived from the room code — the relay only ever sees ciphertext, with **zero storage and zero logs**; campaigns live in the host's browser and can be restored in one click
 
