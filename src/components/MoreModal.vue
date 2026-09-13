@@ -4,7 +4,7 @@
  * 分类：对话（预设/世界书/正则/人设）、数据（用量/工具）、
  * 应用（语言模型等区块作为子级副标题，点击直达设置页对应区块）。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { NDrawer, NDrawerContent, NSelect } from 'naive-ui'
 import WorldBookEditor from './WorldBookEditor.vue'
 import RegexEditor from './RegexEditor.vue'
@@ -14,21 +14,18 @@ import ToolsPanel from './ToolsPanel.vue'
 import MessagesDebugPanel from './MessagesDebugPanel.vue'
 import UsageView from '../views/UsageView.vue'
 import { useCharactersStore } from '../stores/characters'
-import { useSettingsStore } from '../stores/settings'
-import { toast } from '../lib/toast'
 import type { CharacterCard } from '../types'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
-const emit = defineEmits<{ (e: 'update:show', v: boolean): void; (e: 'admin'): void }>()
+const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const characters = useCharactersStore()
-const settings = useSettingsStore()
 
 interface NavItem {
   key: string
   label: string
   /** 内容面板：独立页或设置页中的锚点区块 */
-  pane: 'presets' | 'worldbook' | 'regex' | 'msgdebug' | 'personas' | 'usage' | 'tools' | 'settings' | 'admin'
+  pane: 'presets' | 'worldbook' | 'regex' | 'msgdebug' | 'personas' | 'usage' | 'tools' | 'settings'
   anchor?: string // pane === 'settings' 时滚动到的区块 id
   sub?: boolean // 子级副标题样式
 }
@@ -59,12 +56,6 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { key: 'sec-video', label: '视频生成模型', pane: 'settings', anchor: 'sec-video', sub: true },
       { key: 'sec-params', label: '生成参数', pane: 'settings', anchor: 'sec-params', sub: true },
       { key: 'sec-cover', label: '聊天背景', pane: 'settings', anchor: 'sec-cover', sub: true },
-    ],
-  },
-  {
-    title: '管理',
-    items: [
-      { key: 'admin', label: '管理员口令', pane: 'admin' },
     ],
   },
 ]
@@ -120,57 +111,6 @@ function onRxListUpdate(v: unknown[]) {
 
 // 抽屉宽度：桌面 430~880，窄屏不超过视口（否则左侧导航会被屏幕裁掉）
 const drawerWidth = Math.min(880, Math.max(window.innerWidth - 40, Math.min(430, window.innerWidth)))
-
-// ── 管理员口令：校验通过后打开广场后台弹窗（弹窗由 App 挂载） ──
-const adminPass = ref('')
-const unlocking = ref(false)
-const hasAdminToken = computed(() => !!settings.settings.plazaUploadToken.trim())
-
-function adminApi(): string {
-  return settings.settings.plazaUploadUrl.trim().replace(/\/cards$/, '/')
-}
-
-async function unlockAdmin() {
-  const token = adminPass.value.trim()
-  if (!token) {
-    toast.error('请输入管理员口令')
-    return
-  }
-  const base = adminApi()
-  if (!base) {
-    toast.error('请先配置上传接口地址')
-    return
-  }
-  unlocking.value = true
-  try {
-    // 用一个管理端点校验口令（200 = 正确，403 = 错误）
-    const resp = await fetch(`${base}review`, { headers: { 'x-plaza-token': token } })
-    if (resp.status === 403) {
-      toast.error('口令错误')
-      return
-    }
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    await settings.patch({ plazaUploadToken: token })
-    adminPass.value = ''
-    toast.success('已解锁，进入广场后台')
-    emit('update:show', false) // 收起「更多」，切换到后台页面
-    emit('admin')
-  } catch (err) {
-    toast.error(`无法连接广场服务：${(err as Error).message}`)
-  } finally {
-    unlocking.value = false
-  }
-}
-
-function openAdminDirect() {
-  emit('update:show', false)
-  emit('admin')
-}
-
-async function clearAdminToken() {
-  await settings.patch({ plazaUploadToken: '' })
-  toast.success('已清除本机保存的管理口令')
-}
 </script>
 
 <template>
@@ -233,36 +173,6 @@ async function clearAdminToken() {
 
           <template v-else-if="activeTab === 'settings'">
             <ApiSettingsPanel />
-          </template>
-
-          <template v-else-if="activeTab === 'admin'">
-            <div class="card-panel" style="max-width: 440px; padding: 14px 16px">
-              <template v-if="hasAdminToken">
-                <p style="margin: 0 0 12px; font-size: 0.82rem; color: var(--text-2); line-height: 1.7">
-                  管理口令已保存在本机浏览器。待审上架 / 拒绝 / 下架都在广场后台进行。
-                </p>
-                <div style="display: flex; gap: 8px; flex-wrap: wrap">
-                  <button class="btn primary" @click="openAdminDirect">打开广场后台</button>
-                  <button class="btn ghost" @click="clearAdminToken">清除本机口令</button>
-                </div>
-              </template>
-              <template v-else>
-                <p style="margin: 0 0 12px; font-size: 0.82rem; color: var(--text-2); line-height: 1.7">
-                  输入管理员口令进入广场后台（审核上架 / 拒绝 / 下架）。口令只保存在本机浏览器，不会发给除广场服务器外的任何地方。
-                </p>
-                <div style="display: flex; gap: 8px; flex-wrap: wrap">
-                  <input
-                    v-model="adminPass"
-                    class="input mono"
-                    type="password"
-                    style="flex: 1; min-width: 180px"
-                    placeholder="管理员口令（服务器 PLAZA_TOKEN）"
-                    @keyup.enter="unlockAdmin"
-                  />
-                  <button class="btn primary" :disabled="unlocking" @click="unlockAdmin">进入</button>
-                </div>
-              </template>
-            </div>
           </template>
         </div>
       </div>

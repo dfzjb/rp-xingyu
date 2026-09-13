@@ -126,7 +126,7 @@ async function refreshVideoModels() {
 
     <div class="field">
       <label>Base URL</label>
-      <NInput v-model:value="draft.apiBaseUrl" placeholder="https://dfzjb.site/v1" round />
+      <NInput v-model:value="draft.apiBaseUrl" placeholder="https://api.example.com/v1（OpenAI 兼容端点）" round />
     </div>
 
     <div class="field">
