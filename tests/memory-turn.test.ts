@@ -173,9 +173,11 @@ describe('每轮提炼（总结模式）', () => {
     expect(added).toBe(2)
     const rows = await listMemories(SESSION)
     expect(rows.length).toBe(2)
-    expect(rows[0].summary).toContain('100 金币')
-    expect(rows[0].sourceAssistantIds).toEqual([turn[1].id])
-    expect(rows[0].turn).toBe(1)
+    // 同毫秒入库时 createdAt 相同，listMemories 的排序退化为 id（uuid）序——按内容定位，不断言行序
+    const coin = rows.find((r) => r.summary.includes('100 金币'))
+    expect(coin).toBeTruthy()
+    expect(coin!.sourceAssistantIds).toEqual([turn[1].id])
+    expect(coin!.turn).toBe(1)
   })
 
   it('去重：轮内节点已被覆盖时跳过（续写/重 roll 不重复入库）', async () => {
