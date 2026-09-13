@@ -110,10 +110,33 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export async function getSettings(): Promise<Settings> {
   const s = await db.settings.get('app')
-  if (s) return { ...DEFAULT_SETTINGS, ...s }
+  if (s) return migrateLegacyDefaults({ ...DEFAULT_SETTINGS, ...s })
   const fresh: Settings = { ...DEFAULT_SETTINGS }
   await db.settings.put(fresh)
   return fresh
+}
+
+/**
+ * 一次性默认值迁移：站主服务器 2026-09-13 下线，旧版构建曾把 dfzjb.site 地址作为默认值写进
+ * 老用户的 settings 表。只替换「仍等于旧默认」的字段（用户自填过的不动），替换后落库。
+ */
+const LEGACY_DEFAULTS: Partial<Settings> = {
+  apiBaseUrl: 'https://dfzjb.site/v1',
+  plazaUrl: 'https://dfzjb.site/plaza/index.json',
+  plazaUploadUrl: 'https://dfzjb.site/plaza/api/cards',
+}
+
+function migrateLegacyDefaults(s: Settings): Settings {
+  let changed = false
+  const rec = s as unknown as Record<string, unknown>
+  for (const [key, legacy] of Object.entries(LEGACY_DEFAULTS)) {
+    if (rec[key] === legacy) {
+      rec[key] = DEFAULT_SETTINGS[key as keyof Settings]
+      changed = true
+    }
+  }
+  if (changed) void db.settings.put(deepPlain(s))
+  return s
 }
 
 export async function saveSettings(patch: Partial<Settings>) {
