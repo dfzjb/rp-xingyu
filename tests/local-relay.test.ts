@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { LocalRelay, LOCAL_RELAY_URL } from '../src/lib/hall/localRelay'
 import { db } from '../src/db'
-import { hall, connect, leaveRoom, sendChat, sendRoll } from '../src/lib/hall/useHall'
+import { hall, connect, leaveRoom, sendChat, sendRoll, type Phase } from '../src/lib/hall/useHall'
 
 // connect / enterRoomAsHost 会写 localStorage（node 环境没有）：内存桩
 beforeEach(() => {
@@ -20,6 +20,15 @@ beforeEach(() => {
 
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 20))
+}
+
+/** 轮询等待状态机到达指定阶段（建房是异步链：握手 → created → 落库 → room） */
+async function waitPhase(p: Phase, timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (hall.state.phase !== p) {
+    if (Date.now() - start > timeoutMs) throw new Error(`等待 phase=${p} 超时（当前 ${hall.state.phase}）`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
 }
 
 describe('LocalRelay 信令路由', () => {
@@ -64,8 +73,7 @@ describe('单机团冒烟', () => {
       profile: { name: 'KP', charName: 'KP', persona: '冒烟测试' },
       meta: { title: '单机测试团', desc: '', cover: '', locked: false, relay: 'local' },
     })
-    await flush()
-    expect(hall.state.phase).toBe('room')
+    await waitPhase('room')
     expect(hall.state.isHost).toBe(true)
     expect(hall.state.roomRelay).toBe(LOCAL_RELAY_URL)
     expect(Object.keys(hall.state.members).length).toBe(1)
